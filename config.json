@@ -1,0 +1,41 @@
+{
+  "signerCert": "certs/signer.pem",
+  "signerKey": "certs/signer-key.pem",
+  "// signerCertPem": "-----BEGIN CERTIFICATE-----\\n...\\n-----END CERTIFICATE-----",
+  "// signerKeyPem": "-----BEGIN PRIVATE KEY-----\\n...\\n-----END PRIVATE KEY-----",
+  "vin": "EAY2AT0MPS2013376",
+  "verTimestamp": "2024-01-01T00:00:00Z",
+  "verVersion": 100,
+  "uid": "emailAddress=client.a@atom.team,CN=Client A,OU=Sales,O=KAMA,L=SPb,ST=SPb,C=RU",
+  "safeBags": [
+    {
+      "cert": "certs/driver.pem",
+      "// certPem": "-----BEGIN CERTIFICATE-----\\n...\\n-----END CERTIFICATE-----",
+      "roleName": "dast-agent",
+      "roleNotBefore": "2026-01-15T17:40:20Z",
+      "roleNotAfter": "2027-01-15T17:40:20Z",
+      "localKeyID": "019c9eff-384f-76ab-af61-63d38b3f384b"
+    },
+    {
+      "cert": "certs/passenger.pem",
+      "roleName": "dast-agent",
+      "roleNotBefore": "2026-01-15T17:40:20Z",
+      "roleNotAfter": "2027-01-15T17:40:20Z",
+      "localKeyID": "019c9eff-384f-727d-b0ad-9743d5e59418"
+    },
+    {
+      "cert": "certs/ivi.pem",
+      "roleName": "delegate",
+      "roleNotBefore": "2026-01-15T17:40:21Z",
+      "roleNotAfter": "2027-01-15T17:40:21Z",
+      "localKeyID": "019c9eff-384f-714b-95ab-831cdc6cb040"
+    },
+    {
+      "cert": "certs/mobile-driver.pem",
+      "roleName": "driver-mobile",
+      "roleNotBefore": "2026-01-15T17:40:21Z",
+      "roleNotAfter": "2027-01-15T17:40:21Z",
+      "localKeyID": "019c9eff-384f-7a67-ba51-504f81bae86c"
+    }
+  ]
+}

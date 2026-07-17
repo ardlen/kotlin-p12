@@ -1,0 +1,9 @@
+# Copy to local.properties and set your Android SDK path.
+# macOS (Android Studio default):
+# sdk.dir=/Users/<you>/Library/Android/sdk
+# Linux:
+# sdk.dir=/home/<you>/Android/Sdk
+sdk.dir=/path/to/Android/sdk
+
+# iOS: install Xcode (not only Command Line Tools) and run Gradle Sync.
+# iosMain uses platform.Foundation — IDE resolves it after KMP + Xcode toolchain import.

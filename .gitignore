@@ -1,0 +1,27 @@
+# OS / IDE
+.DS_Store
+*.iml
+.idea/
+.vscode/
+
+# Gradle / Kotlin
+**/.gradle/
+**/.kotlin/
+**/build/
+**/out/
+kotlin/dist/
+kotlin/local.properties
+
+# Example / test outputs
+kotlin-out/
+
+# Private keys (never publish)
+*-key.pem
+*.key
+**/root-ca-key.pem
+
+# Large local binaries
+registry-analyzer
+
+# Optional local dumps
+*.log
