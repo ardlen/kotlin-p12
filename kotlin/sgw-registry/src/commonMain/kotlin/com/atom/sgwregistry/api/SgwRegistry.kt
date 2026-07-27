@@ -137,6 +137,7 @@ object SgwRegistry : RegistryParserService, RegistryBuilderService, SignatureVer
         configurationId: String? = null,
         ownerId: String? = null,
         alignOwnerIdWithSigner: Boolean = false,
+        fqdnIdentityId: String? = null,
     ) = com.atom.sgwregistry.cloudconfig.CloudConfigFromContext.buildAndSign(
         response = response,
         signerCertDer = signerCertDer,
@@ -145,5 +146,6 @@ object SgwRegistry : RegistryParserService, RegistryBuilderService, SignatureVer
         configurationId = configurationId,
         ownerId = ownerId,
         alignOwnerIdWithSigner = alignOwnerIdWithSigner,
+        fqdnIdentityId = fqdnIdentityId,
     )
 }

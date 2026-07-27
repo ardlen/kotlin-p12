@@ -24,7 +24,7 @@
  *
  * | Индекс | Содержимое |
  * |--------|------------|
- * | `args[0]` | Имя команды: `parse`, `verify`, `analyze`, `build`, `config`, `add-cert`, `remove-cert`, `update-registry`, `cloud-config`, `cloud-config-trust`, `cloud-config-from-context`, `empty-owner`, `empty-owner-unsigned`, `all` |
+ * | `args[0]` | Имя команды: `parse`, `verify`, `analyze`, `build`, `config`, `add-cert`, `remove-cert`, `update-registry`, `cloud-config`, `cloud-config-trust`, `cloud-config-from-context`, `sign-tbox`, `empty-owner`, `empty-owner-unsigned`, `all` |
  * | `args[1…]` | Позиционные аргументы команды (см. ветки [main] и [printUsage]) |
  *
  * Разрешение путей: [argPath] → [SampleSupport.resolveInputPath] (относительные от [SampleSupport.repoRoot]).
@@ -245,15 +245,15 @@ fun main(args: Array<String>) {
         }
 
         // ── cloud-config-from-context [resp-context.json] [config.json] [v] [out.json]
-        // → CloudConfigFromContextExample: invitation draft → signed cloud_configuration → verify
+        // → CloudConfigFromContextExample: invitation draft → TBOX JSON (+ envelope)
         "cloud-config-from-context" -> {
             val resp = argPath(args, 1, SampleSupport.repoRoot.resolve("resp-context.json"))
             val config = argPath(args, 2, SampleSupport.defaultConfig())
             val payloadVersion = if (args.size > 3) args[3].toIntOrNull() else 5
             val output = if (args.size > 4) {
-                argPath(args, 4, SampleSupport.repoRoot.resolve("kotlin-out/cloud-config-from-context.json"))
+                argPath(args, 4, SampleSupport.repoRoot.resolve("kotlin-out/cloud-config-tbox.json"))
             } else {
-                SampleSupport.repoRoot.resolve("kotlin-out/cloud-config-from-context.json")
+                SampleSupport.repoRoot.resolve("kotlin-out/cloud-config-tbox.json")
             }
             Files.createDirectories(output.parent)
             CloudConfigFromContextExample.run(
@@ -261,6 +261,26 @@ fun main(args: Array<String>) {
                 SampleSupport.requireExists(config, "config.json"),
                 output,
                 payloadVersion,
+            )
+        }
+
+        // ── sign-tbox [tbox.json] [config.json] [outPrefix] [vin] [fqdnId] [owner_id]
+        // → SignTboxCloudConfigExample: TBOX → cloud_config_pem; FQDN=hashB(vin)-fqdnId.domain
+        "sign-tbox" -> {
+            val tbox = argPath(args, 1, SampleSupport.repoRoot.resolve("kotlin-out/cloud-config-tbox.json"))
+            val config = argPath(args, 2, SampleSupport.defaultConfig())
+            val outPrefix = argPath(args, 3, SampleSupport.repoRoot.resolve("kotlin-out/cloud-config-tbox-signed"))
+            val vin = if (args.size > 4) args[4] else ""
+            val fqdnId = if (args.size > 5) args[5] else ""
+            val ownerId = if (args.size > 6) args[6] else ""
+            Files.createDirectories(outPrefix.parent)
+            SignTboxCloudConfigExample.run(
+                SampleSupport.requireExists(tbox, "tbox JSON"),
+                SampleSupport.requireExists(config, "config.json"),
+                outPrefix,
+                vin = vin,
+                fqdnIdentityId = fqdnId,
+                ownerId = ownerId,
             )
         }
 
@@ -349,7 +369,9 @@ private fun printUsage() {
         |  cloud-config-trust [mob.json] [vin] [owner_id] [ownership-ca.pem]
         |                                 identity → PKIX(root_cas) → CMS signature
         |  cloud-config-from-context [resp-context.json] [config.json] [v] [out.json]
-        |                                 invitation → signed cloud_configuration → verify
+        |                                 invitation → TBOX cloudBroker JSON (+ envelope)
+        |  sign-tbox [tbox.json] [config.json] [outPrefix] [vin] [fqdnId] [owner_id]
+        |                                 TBOX JSON → cloud_config_pem; FQDN=hashB(vin)-fqdnId.…
         |  all    [file.p12]              all of the above
         |
         |Defaults (cwd = repo root via Gradle workingDir):

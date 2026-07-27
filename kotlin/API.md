@@ -1,9 +1,37 @@
 # SgwRegistry — справочник API
 
-Документация API библиотеки **com.atom:sgw-registry:2.5.0** (Kotlin Multiplatform).
+Документация API библиотеки **com.atom:sgw-registry:2.6.0** (Kotlin Multiplatform).
 
 **Артефакты:** `kotlin/dist/maven/` (KMP: metadata + `-jvm` / `-android` / `-iosarm64` / `-iossimulatorarm64`)  
-или плоский JVM JAR `dist/sgw-registry-2.5.0.jar` (только desktop).
+или плоский JVM JAR `dist/sgw-registry-2.6.0.jar` (только desktop).
+
+## Оглавление
+
+1. [Обзор](#обзор) — KMP-таргеты, source sets, подключение
+2. [Модели данных](#модели-данных) — `RegistryContainer`, `BuildConfig`, …
+3. [Реестр PKCS#12](#реестр-pkcs12)
+   - [Parse — `RegistryParser`](#parse--registryparser)
+   - [Build — `RegistryBuilder`](#build--registrybuilder)
+   - [Verify — `SignatureVerifier`](#verify--signatureverifier)
+   - [Analyze — `RegistryAnalyzer`](#analyze--registryanalyzer)
+   - [Config — `BuildConfigFactory` / `ConfigLoader`](#config--buildconfigfactory-commonmain-и-configloader-jvm)
+   - [Crypto — `PemEncoding`](#crypto--pemencoding-commonmain) · [`PlatformCrypto`](#crypto--platformcrypto-и-signingkey) · [`PemUtils`](#crypto--pemutils-jvm)
+   - [VER — `VerAttribute`](#ver--verattribute)
+   - [Converters](#converters--registryconverters)
+   - [Фасад — `SgwRegistry`](#фасад--sgwregistry)
+   - [ATOM OID](#atom-oid-справочно)
+4. [Cloud configuration](#cloud-config--cloudconfigcms-mob-dev)
+   - [`CloudConfigCms`](#cloudconfigcms) · [`CloudConfigFromContext`](#cloudconfigfromcontext) · [`CloudBrokerFqdn`](#cloudbrokerfqdn-ces-vehicle-cloud-configuration-212-5)
+   - [Invitation → TBOX + CMS](#invitation-context--tbox--cms)
+5. [Типичные сценарии](#типичные-сценарии)
+6. [JVM-примеры (`registry-examples`)](#jvm-примеры-registry-examples)
+   - [Быстрый старт](#быстрый-старт) · [Gradle-задачи](#сокращённые-gradle-задачи)
+   - [`cloud-config`](#cloud-configuration-cloud-config) · [`trust`](#cloud-config-trust-cloud-config-trust) · [`from-context`](#invitation--tbox-cloud-config-from-context) · [`sign-tbox`](#подпись-tbox-sign-tbox)
+7. [Примеры для мобильных платформ](#примеры-для-мобильных-платформ-android--ios--commonmain)
+8. [Проверка опубликованного пакета](#проверка-опубликованного-пакета-тесты-и-примеры)
+9. [Сводка исключений](#сводка-исключений)
+
+---
 
 ## Обзор
 
@@ -16,7 +44,7 @@
 | Verify | Проверка CMS-подписи и messageDigest | commonMain (все) |
 | Analyze | Текстовые/JSON отчёты, PEM | commonMain (все) |
 | Update | Добавление/удаление SafeBag с auto-bump VER | commonMain (все) |
-| Cloud config | mob-dev `cloud_configuration`: parse/verify/resign `cloud_config_pem` | commonMain (все) |
+| Cloud config | mob-dev CMS: parse/verify/resign; invitation → TBOX + CES FQDN; sign-tbox | commonMain (все) |
 | Config JSON | `config.json` → `BuildConfig` | **JVM:** `ConfigLoader`; **mobile:** `BuildConfigFactory` + `loadPem` |
 | File export | Экспорт PEM на диск | **только JVM** (`RegistryAnalyzerJvm`) для мобильных платфром, хранение данных реестра зависит от мобильной платфромы |
 
@@ -28,17 +56,17 @@
 
 | Gradle target | Maven publication | Формат |
 |---------------|-------------------|--------|
-| `jvm` | `com.atom:sgw-registry-jvm:2.5.0` | JAR |
-| `android` | `com.atom:sgw-registry-android:2.5.0` | AAR |
-| `iosArm64` | `com.atom:sgw-registry-iosarm64:2.5.0` | `.klib` |
-| `iosSimulatorArm64` | `com.atom:sgw-registry-iossimulatorarm64:2.5.0` | `.klib` |
-| metadata | `com.atom:sgw-registry:2.5.0` | `.module` + common metadata |
+| `jvm` | `com.atom:sgw-registry-jvm:2.6.0` | JAR |
+| `android` | `com.atom:sgw-registry-android:2.6.0` | AAR |
+| `iosArm64` | `com.atom:sgw-registry-iosarm64:2.6.0` | `.klib` |
+| `iosSimulatorArm64` | `com.atom:sgw-registry-iossimulatorarm64:2.6.0` | `.klib` |
+| metadata | `com.atom:sgw-registry:2.6.0` | `.module` + common metadata |
 
 В KMP-проекте зависимость объявляется **один раз** в `commonMain`:
 
 ```kotlin
 commonMain.dependencies {
-    implementation("com.atom:sgw-registry:2.5.0")
+    implementation("com.atom:sgw-registry:2.6.0")
 }
 ```
 
@@ -48,6 +76,7 @@ commonMain.dependencies {
 |-----|:----------:|:-------:|:-----------:|:-------:|
 | `RegistryParser`, `RegistryBuilder`, `SignatureVerifier`, `RegistryAnalyzer` | ✓ | ✓ | ✓ | ✓ |
 | `SgwRegistry`, `PemEncoding`, `VerAttribute`, модели (`BuildConfig`, …) | ✓ | ✓ | ✓ | ✓ |
+| `CloudConfigCms`, `CloudConfigFromContext`, `CloudBrokerFqdn` | ✓ | ✓ | ✓ | ✓ |
 | `SigningKey`, `PlatformCrypto` (expect/actual) | expect | actual (JCA) | actual (JCA) | actual (SecKey) |
 | `BuildConfigFactory`, `RegistryConfig` | ✓ | ✓ | ✓ | ✓ |
 | `ConfigLoader`, `PemUtils` | — | ✓ | — | — |
@@ -67,7 +96,7 @@ kotlin {
 
     sourceSets {
         commonMain.dependencies {
-            implementation("com.atom:sgw-registry:2.5.0")
+            implementation("com.atom:sgw-registry:2.6.0")
         }
     }
 }
@@ -76,7 +105,7 @@ kotlin {
 ```kotlin
 // JVM-only
 dependencies {
-    implementation("com.atom:sgw-registry:2.5.0")
+    implementation("com.atom:sgw-registry:2.6.0")
 }
 ```
 
@@ -87,6 +116,9 @@ import com.atom.sgwregistry.parser.RegistryParser
 import com.atom.sgwregistry.builder.RegistryBuilder
 import com.atom.sgwregistry.verifier.SignatureVerifier
 import com.atom.sgwregistry.analyzer.RegistryAnalyzer
+import com.atom.sgwregistry.cloudconfig.CloudConfigCms
+import com.atom.sgwregistry.cloudconfig.CloudConfigFromContext
+import com.atom.sgwregistry.cloudconfig.CloudBrokerFqdn
 import com.atom.sgwregistry.crypto.PemEncoding
 import com.atom.sgwregistry.crypto.PlatformCrypto
 
@@ -102,7 +134,7 @@ import com.atom.sgwregistry.crypto.PemUtils
 1. **Фасад** `SgwRegistry` — единый object, реализует интерфейсы сервисов.
 2. **Специализированные object-ы** — `RegistryParser`, `RegistryBuilder`, `SignatureVerifier`, `RegistryAnalyzer` (все платформы); `ConfigLoader`, `PemUtils` (**только JVM**); `VerAttribute`.
 
-Пакеты `com.atom.sgwregistry.internal.*` и низкоуровневый ASN.1 (`asn1.*`) предназначены для внутреннего использования; стабильный контракт — пакеты `api`, `model`, `parser`, `builder`, `verifier`, `analyzer`, `crypto`.
+Пакеты `com.atom.sgwregistry.internal.*` и низкоуровневый ASN.1 (`asn1.*`) предназначены для внутреннего использования; стабильный контракт — пакеты `api`, `model`, `parser`, `builder`, `verifier`, `analyzer`, `cloudconfig`, `crypto`.
 
 ---
 
@@ -286,6 +318,11 @@ SKID сопоставляется с `localKeyID` SafeBag и расширени�
 Краткая сводка X.509: `subject`, `issuer`, `serial`, `notBefore`, `notAfter`, `keyAlg`.
 
 ---
+
+## Реестр PKCS#12
+
+API контейнера **ATOM-PKCS12-REGISTRY** (`.p12` / PFX v3 + CMS SignedData): parse → build → verify → analyze → update.  
+Cloud configuration (отдельный CMS, не PFX) — [ниже](#cloud-config--cloudconfigcms-mob-dev).
 
 ## Parse — `RegistryParser`
 
@@ -778,7 +815,7 @@ object SgwRegistry :
 - `SignatureVerifierService`
 - `RegistryAnalyzerService`
 
-Дополнительно (mob-dev `cloud_configuration`):
+Дополнительно (mob-dev `cloud_configuration` + invitation → TBOX):
 
 | Метод | Описание |
 |-------|----------|
@@ -786,10 +823,15 @@ object SgwRegistry :
 | `parseCloudConfigPem(pemOrDer)` | `cloud_config_pem` → `CloudConfigCmsContainer` |
 | `verifyCloudConfigPem(pemOrDer)` | Проверка CMS |
 | `verifyCloudConfiguration(dto)` | JSON + CMS end-to-end |
-| `resignCloudConfigPem(request)` | Переподпись → PEM |
+| `requireCloudConfigIdentity(dto, vin, ownerId)` | vin / owner_id |
+| `requireCloudConfigOwnerIdInSigner(dto)` | owner_id в UID subject |
+| `resignCloudConfigPem(request)` | Переподпись → PEM (eContent из JSON) |
 | `resignCloudConfigOnly(container, request)` | Переподпись без пересборки eContent |
+| `resignCloudConfiguration(dto, cert, key)` | DTO + новый PEM из JSON |
 | `resignCloudConfigurationOnly(dto, cert, key)` | Только `cloud_config_pem` |
 | `cloudConfigToText(dto)` | Отчёт для лога/UI |
+| `parseInvitationContext(bytes\|text)` | `resp-context.json` → `InvitationContextResponse` |
+| `buildCloudConfigurationFromContext(...)` | invitation → signed DTO (CES FQDN + CMS) |
 
 ---
 
@@ -804,6 +846,291 @@ object SgwRegistry :
 | `atomRoleValidityPeriod` | `1.3.6.1.4.1.99999.1.5` | Период действия роли |
 
 Полный реестр: `com.atom.sgwregistry.asn1.Oids`.
+
+---
+
+## Cloud config — `CloudConfigCms` (mob-dev)
+
+Пакет: `com.atom.sgwregistry.cloudconfig`  
+Модели: `com.atom.sgwregistry.model` (`CloudConfigurationDto`, `CloudConfigResignRequest`, …)
+
+Ответ mob-dev (`mob-dev-cloud_config.json` в корне репозитория):
+
+```json
+{
+  "cloud_configuration": {
+    "cloud_config_json": "{...}",
+    "cloud_config_pem": "-----BEGIN CMS-----\\n...",
+    "vin": "...",
+    "owner_id": "..."
+  }
+}
+```
+
+`cloud_config_pem` — CMS SignedData с eContent = байты `cloud_config_json`. Подписант — owner certificate (`issuerAndSerial`, DER ECDSA).
+
+### `CloudConfigurationDto` (mob-dev envelope)
+
+| Поле JSON | Kotlin | Описание |
+|-----------|--------|----------|
+| `cloud_config_json` | `cloudConfigJson` | camelCase payload (eContent) |
+| `cloud_config_pem` | `cloudConfigPem` | CMS PEM |
+| `vin` / `owner_id` | `vin` / `ownerId` | identity |
+| `root_cas` | `rootCas` | trust anchors брокера (не цепочка CMS-leaf) |
+| `base_domain` | `baseDomain` | в envelope; в TBOX FQDN — внутри JSON |
+
+### `CloudConfigCms`
+
+```kotlin
+object CloudConfigCms
+```
+
+| Метод | Описание |
+|-------|----------|
+| `parseMobDevResponse(bytes\|text)` | JSON → `MobDevCloudConfigResponse` |
+| `parsePem(pem\|pemOrDer)` | CMS → `CloudConfigCmsContainer` |
+| `verify(container)` | Проверка CMS-подписи |
+| `verifyPem(pemOrDer)` | parse + verify |
+| `tryVerify(container)` | `Pair<Boolean, String?>` |
+| `verifyJsonMatchesEContent(container, json)` | JSON == eContent |
+| `verifyCloudConfiguration(dto)` | json match + CMS verify |
+| `requireIdentity(dto, vin, ownerId)` | vin / owner_id == ожидаемые |
+| `requireOwnerIdInSigner(dto)` | owner_id в UID subject подписанта |
+| `resign(request)` | Новый CMS DER |
+| `resignToPem(request)` | Новый PEM (`-----BEGIN CMS-----`) — **пересборка eContent из JSON** |
+| `resignConfiguration(dto, cert, key)` | DTO с новым `cloud_config_pem` (из JSON) |
+| `resignOnly(container, request)` | Переподпись **без пересборки** eContent (байты из CMS) |
+| `resignOnlyToPem(...)` | То же → PEM |
+| `resignConfigurationOnly(dto, cert, key)` | Только `cloud_config_pem`; JSON не меняется |
+| `toText(container\|dto)` | Отчёт для лога/UI |
+
+### `CloudConfigFromContext`
+
+Пакет: `com.atom.sgwregistry.cloudconfig`  
+Модели invitation / TBOX: `InvitationContextResponse`, `VehicleCloudConfigurationDraft`, `CloudBrokerConfigPayload`, …
+
+Вход invitation (`resp-context.json`):
+
+```json
+{
+  "id": "...",
+  "vin": "EAY1F1C56T2000014",
+  "tenant_id": "2281305f-4b16-4a49-989a-9abeeac2df20",
+  "context": {
+    "ownership_registry": "-----BEGIN CMS-----...-----END CMS-----",
+    "vehicle_cloud_configuration": {
+      "current_version": 1,
+      "cloud_broker": {
+        "root_cas": [ "-----BEGIN CERTIFICATE-----..." ],
+        "endpoint": {
+          "base_domain": "mqtt.atom.auto",
+          "fqdn_constr_alg": 1
+        }
+      }
+    }
+  }
+}
+```
+
+`ownership_registry` на практике часто **PFX v3** (метка `BEGIN CMS`, внутри INTEGER 3 + SignedData), не standalone ContentInfo как у `cloud_config_pem`.
+
+```kotlin
+object CloudConfigFromContext
+```
+
+| Метод | Описание |
+|-------|----------|
+| `parseInvitationResponse(bytes\|text)` | JSON → `InvitationContextResponse` |
+| `extractOwnerIdFromOwnershipCms(pem)` | UID leaf из `ownership_registry` |
+| `extractUidFromSubject(subject)` | UID=… из DN string |
+| `buildCloudConfigJson(draft, payloadVersion?, vin?, fqdnIdentityId?)` | snake_case → compact camelCase; при alg=1 — CES FQDN |
+| `buildUnsignedConfiguration(response, …, fqdnIdentityId?)` | DTO без `cloud_config_pem` |
+| `buildAndSign(response, cert, key, payloadVersion?, fqdnIdentityId?, …)` | payload + CMS (`resignToPem`) |
+| `encodeTboxPayload(dto, pretty?)` | только `{ "v", "cloudBroker" }` для TBOX |
+| `encodeMobDevResponse(dto)` | `{ "cloud_configuration": … }` |
+| `signTboxPayload(json, cert, key, vin?, fqdnIdentityId?)` | TBOX JSON → compact eContent + CMS PEM |
+| `toMobDevResponse(dto)` | обёртка `MobDevCloudConfigResponse` |
+
+**Выход TBOX (payload):**
+
+```json
+{
+  "v": 5,
+  "cloudBroker": {
+    "rootCAs": [ "...PEM..." ],
+    "endpoint": {
+      "fqdnConstrAlg": 1,
+      "baseDomain": "d06e-2281305f-….mqtt.atom.auto"
+    }
+  }
+}
+```
+
+`cloud_config_json` / eContent CMS — **компактная** сериализация того же объекта.  
+`encodeTboxPayload(pretty=true)` — для файла/передачи; байты ≠ eContent, если pretty.
+
+**FQDN по умолчанию в `buildAndSign`:** `tenant_id` из invitation (если непустой), иначе ownership UID.  
+Поле DTO `owner_id` всегда = UID leaf из `ownership_registry` (для trust).
+
+### `CloudBrokerFqdn` (CES Vehicle cloud configuration 2.1.2 §5)
+
+```kotlin
+object CloudBrokerFqdn {
+    const val ALG_HASH_B_VIN_OWNER = 1
+}
+```
+
+| Метод | Описание |
+|-------|----------|
+| `hashB(vin)` | SHA-1(ASCII VIN) → последние 4 hex lowercase |
+| `buildFqdn(vin, identityId, domainSuffix, alg=1)` | полный FQDN |
+| `resolveBaseDomain(vin, identityId, domainOrFqdn, alg=1)` | суффикс → FQDN; уже готовый FQDN не трогает |
+
+Правило `fqdnConstrAlg = 1`:
+
+```
+FQDN = hashB(VIN) + "-" + identityId + "." + domainSuffix
+```
+
+| Пример CES | Значение |
+|------------|----------|
+| VIN | `1GNDT13S532183584` |
+| hashB | `c602` |
+| ownerID | `bdb79393-a9e3-4024-86a8-5f372df9121f` |
+| FQDN | `c602-bdb79393-a9e3-4024-86a8-5f372df9121f.mqtt.atom.auto` |
+
+Invitation-пример (`resp-context.json`):  
+`hashB(EAY1F1C56T2000014)` = `d06e`, `tenant_id` = `2281305f-…` →  
+`d06e-2281305f-4b16-4a49-989a-9abeeac2df20.mqtt.atom.auto`.
+
+В signed / TBOX JSON поле `endpoint.baseDomain` хранит **полный FQDN** (не только `mqtt.atom.auto`).
+
+### Модели invitation / TBOX
+
+| Тип | Назначение |
+|-----|------------|
+| `InvitationContextResponse` | корень `resp-context.json` (`vin`, `tenant_id`, `context`) |
+| `InvitationContextDto` | `ownership_registry`, `vehicle_cloud_configuration`, … |
+| `VehicleCloudConfigurationDraft` | snake_case draft брокера |
+| `CloudBrokerConfigPayload` | camelCase eContent / TBOX (`v`, `cloudBroker`) |
+| `CloudBrokerConfigBody` / `CloudBrokerEndpointPayload` | `rootCAs`, `fqdnConstrAlg`, `baseDomain` |
+
+Парсер: `InvitationContextJson.parse` / `CloudConfigFromContext.parseInvitationResponse`.
+
+### `CloudConfigResignRequest` — пересборка из JSON
+
+```kotlin
+data class CloudConfigResignRequest(
+    val jsonPayload: String,
+    val signerCertDer: ByteArray,
+    val signerKey: SigningKey,
+    val includeSigningTime: Boolean = true,
+    val includeSigningCertificateV2: Boolean = true,
+    val useIssuerAndSerialSid: Boolean = true,
+)
+```
+
+Используйте, когда нужно подписать строку `cloud_config_json` заново (encode UTF-8 → eContent).
+
+### `CloudConfigResignOnlyRequest` — только переподпись
+
+```kotlin
+data class CloudConfigResignOnlyRequest(
+    val signerCertDer: ByteArray,
+    val signerKey: SigningKey,
+    val includeSigningTime: Boolean = true,
+    val includeSigningCertificateV2: Boolean = true,
+    val useIssuerAndSerialSid: Boolean = true,
+)
+```
+
+eContent берётся из уже разобранного `cloud_config_pem` **как есть** — без `jsonPayload.encodeToByteArray()`.
+
+```kotlin
+val container = CloudConfigCms.parsePem(dto.cloudConfigPem)
+val newPem = CloudConfigCms.resignOnlyToPem(
+    container,
+    CloudConfigResignOnlyRequest(signerCertDer, signerKey),
+)
+
+// или для всего DTO:
+val updated = CloudConfigCms.resignConfigurationOnly(dto, signerCertDer, signerKey)
+```
+
+### Типичный сценарий (commonMain — все платформы)
+
+```kotlin
+// 1. Parse JSON от backend
+val dto = MobDevCloudConfigJson.parse(responseBytes).cloudConfiguration
+
+// 2. Лог / UI
+println(CloudConfigCms.toText(dto))
+
+// 3. Verify перед использованием конфигурации
+CloudConfigCms.verifyCloudConfiguration(dto)
+
+// 4. Resign — только переподпись CMS (eContent без изменений)
+val updated = CloudConfigCms.resignConfigurationOnly(
+    dto = dto,
+    signerCertDer = ownerCertDer,
+    signerKey = signingKey,
+)
+
+// Альтернатива: пересборка eContent из JSON (если json менялся)
+// CloudConfigCms.resignConfiguration(dto, ownerCertDer, signingKey)
+```
+
+### Invitation context → TBOX + CMS
+
+```kotlin
+val invitation = CloudConfigFromContext.parseInvitationResponse(respContextBytes)
+// endpoint.baseDomain = hashB(vin)-tenant_id.mqtt… (alg=1); owner_id = ownership UID
+val signed = CloudConfigFromContext.buildAndSign(
+    response = invitation,
+    signerCertDer = ownerCertDer,
+    signerKey = ownerKey,
+    payloadVersion = 5,
+)
+CloudConfigCms.verifyCloudConfiguration(signed)
+CloudConfigCms.requireIdentity(signed, invitation.vin, signed.ownerId)
+
+// для TBOX — только camelCase payload
+val tboxJson = CloudConfigFromContext.encodeTboxPayload(signed)
+
+// или подписать уже готовый TBOX-файл:
+val (compact, pem) = CloudConfigFromContext.signTboxPayload(
+    tboxJson = tboxFileText,
+    signerCertDer = ownerCertDer,
+    signerKey = ownerKey,
+    vin = invitation.vin,
+    fqdnIdentityId = invitation.tenantId,
+)
+```
+
+Через фасад:
+
+```kotlin
+SgwRegistry.parseMobDevCloudConfig(jsonBytes)
+SgwRegistry.verifyCloudConfiguration(dto)
+SgwRegistry.cloudConfigToText(dto)
+SgwRegistry.resignCloudConfigPem(request)
+SgwRegistry.resignCloudConfiguration(dto, ownerCertDer, ownerKey)
+SgwRegistry.parseInvitationContext(respContextBytes)
+SgwRegistry.buildCloudConfigurationFromContext(
+    invitation, ownerCertDer, ownerKey,
+    payloadVersion = 5,
+    fqdnIdentityId = invitation.tenantId, // optional; default = tenant_id / ownership UID
+)
+```
+
+### Cloud config на iOS / Android
+
+- Parse/verify/resign — через `CloudConfigCms` (commonMain).
+- Invitation → TBOX / CES FQDN — `CloudConfigFromContext` + `CloudBrokerFqdn` (commonMain).
+- `signerKey` — из Keystore (Android) или Keychain (iOS); **не** использовать raw 64-byte P1363 подпись.
+- JSON и PEM — из API/backend как `ByteArray` / `String`.
+
+Unit-тесты: `CloudConfigCmsTest`, `CloudConfigFromContextTest`, `CloudBrokerFqdnTest` (fixtures `mob-dev-cloud_config.json`, `resp-context.json`).
 
 ---
 
@@ -875,7 +1202,8 @@ val updated = RegistryBuilder.removeCertificateBySkidAndResign(
 ### Cloud configuration (mob-dev)
 
 Ответ облачного сервиса mob-dev содержит `cloud_config_json` (UTF-8 JSON) и `cloud_config_pem` (standalone CMS SignedData, не PFX).  
-Подробнее — раздел [CloudConfigCms](#cloud-config--cloudconfigcms-mob-dev) и пример `samples/registry-examples/.../CloudConfigExample.kt`.
+Invitation (`resp-context.json`) → camelCase TBOX + CES FQDN — через `CloudConfigFromContext` / `CloudBrokerFqdn`.  
+Подробнее — раздел [CloudConfigCms](#cloud-config--cloudconfigcms-mob-dev) и примеры `cloud-config*` / `sign-tbox` в `samples/registry-examples`.
 
 ```kotlin
 import com.atom.sgwregistry.cloudconfig.CloudConfigCms
@@ -895,159 +1223,13 @@ val newPem = CloudConfigCms.resignToPem(
 )
 ```
 
-JVM-пример: `./gradlew :samples:registry-examples:runCloud-config`
+JVM-пример: `./gradlew :samples:registry-examples:runCloud-config`  
+Invitation → TBOX: `./gradlew :samples:registry-examples:runCloud-config-from-context`  
+TBOX → PEM: `./gradlew :samples:registry-examples:runSign-tbox`
 
 ---
 
-## Cloud config — `CloudConfigCms` (mob-dev)
-
-Пакет: `com.atom.sgwregistry.cloudconfig`  
-Модели: `com.atom.sgwregistry.model` (`CloudConfigurationDto`, `CloudConfigResignRequest`, …)
-
-Ответ mob-dev (`mob-dev-cloud_config.json` в корне репозитория):
-
-```json
-{
-  "cloud_configuration": {
-    "cloud_config_json": "{...}",
-    "cloud_config_pem": "-----BEGIN CMS-----\\n...",
-    "vin": "...",
-    "owner_id": "..."
-  }
-}
-```
-
-`cloud_config_pem` — CMS SignedData с eContent = байты `cloud_config_json`. Подписант — owner certificate (`issuerAndSerial`, DER ECDSA).
-
-### `CloudConfigCms`
-
-```kotlin
-object CloudConfigCms
-```
-
-| Метод | Описание |
-|-------|----------|
-| `parseMobDevResponse(bytes\|text)` | JSON → `MobDevCloudConfigResponse` |
-| `parsePem(pem\|pemOrDer)` | CMS → `CloudConfigCmsContainer` |
-| `verify(container)` | Проверка CMS-подписи |
-| `verifyPem(pemOrDer)` | parse + verify |
-| `tryVerify(container)` | `Pair<Boolean, String?>` |
-| `verifyJsonMatchesEContent(container, json)` | JSON == eContent |
-| `verifyCloudConfiguration(dto)` | json match + CMS verify |
-| `requireIdentity(dto, vin, ownerId)` | vin / owner_id == ожидаемые |
-| `requireOwnerIdInSigner(dto)` | owner_id в UID subject подписанта |
-| `resign(request)` | Новый CMS DER |
-| `resignToPem(request)` | Новый PEM (`-----BEGIN CMS-----`) — **пересборка eContent из JSON** |
-| `resignConfiguration(dto, cert, key)` | DTO с новым `cloud_config_pem` (из JSON) |
-| `resignOnly(container, request)` | Переподпись **без пересборки** eContent (байты из CMS) |
-| `resignOnlyToPem(...)` | То же → PEM |
-| `resignConfigurationOnly(dto, cert, key)` | Только `cloud_config_pem`; JSON не меняется |
-| `toText(container\|dto)` | Отчёт для лога/UI |
-
-### `CloudConfigFromContext`
-
-```kotlin
-object CloudConfigFromContext
-```
-
-| Метод | Описание |
-|-------|----------|
-| `parseInvitationResponse(bytes\|text)` | `resp-context.json` → `InvitationContextResponse` |
-| `extractOwnerIdFromOwnershipCms(pem)` | UID leaf из `ownership_registry` (PFX v3 или CMS) |
-| `buildCloudConfigJson(draft, payloadVersion?)` | snake_case draft → camelCase `cloud_config_json` |
-| `buildUnsignedConfiguration(...)` | DTO без `cloud_config_pem` |
-| `buildAndSign(..., signerCert, key, payloadVersion?)` | payload + CMS (`resignToPem`) |
-| `encodeMobDevResponse(dto)` | JSON `{ "cloud_configuration": ... }` |
-
-### `CloudConfigResignRequest` — пересборка из JSON
-
-```kotlin
-data class CloudConfigResignRequest(
-    val jsonPayload: String,
-    val signerCertDer: ByteArray,
-    val signerKey: SigningKey,
-    val includeSigningTime: Boolean = true,
-    val includeSigningCertificateV2: Boolean = true,
-    val useIssuerAndSerialSid: Boolean = true,
-)
-```
-
-Используйте, когда нужно подписать строку `cloud_config_json` заново (encode UTF-8 → eContent).
-
-### `CloudConfigResignOnlyRequest` — только переподпись
-
-```kotlin
-data class CloudConfigResignOnlyRequest(
-    val signerCertDer: ByteArray,
-    val signerKey: SigningKey,
-    val includeSigningTime: Boolean = true,
-    val includeSigningCertificateV2: Boolean = true,
-    val useIssuerAndSerialSid: Boolean = true,
-)
-```
-
-eContent берётся из уже разобранного `cloud_config_pem` **как есть** — без `jsonPayload.encodeToByteArray()`.
-
-```kotlin
-val container = CloudConfigCms.parsePem(dto.cloudConfigPem)
-val newPem = CloudConfigCms.resignOnlyToPem(
-    container,
-    CloudConfigResignOnlyRequest(signerCertDer, signerKey),
-)
-
-// или для всего DTO:
-val updated = CloudConfigCms.resignConfigurationOnly(dto, signerCertDer, signerKey)
-```
-
-### Типичный сценарий (commonMain — все платформы)
-
-```kotlin
-// 1. Parse JSON от backend
-val dto = MobDevCloudConfigJson.parse(responseBytes).cloudConfiguration
-
-// 2. Лог / UI
-println(CloudConfigCms.toText(dto))
-
-// 3. Verify перед использованием конфигурации
-CloudConfigCms.verifyCloudConfiguration(dto)
-
-// 4. Resign — только переподпись CMS (eContent без изменений)
-val updated = CloudConfigCms.resignConfigurationOnly(
-    dto = dto,
-    signerCertDer = ownerCertDer,
-    signerKey = signingKey,
-)
-
-// Альтернатива: пересборка eContent из JSON (если json менялся)
-// CloudConfigCms.resignConfiguration(dto, ownerCertDer, signingKey)
-```
-
-### Invitation context → signed cloud_configuration
-
-```kotlin
-val invitation = CloudConfigFromContext.parseInvitationResponse(respContextBytes)
-val signed = CloudConfigFromContext.buildAndSign(
-    response = invitation,
-    signerCertDer = ownerCertDer,
-    signerKey = ownerKey,
-    payloadVersion = 5, // поле "v" в cloud_config_json
-)
-CloudConfigCms.verifyCloudConfiguration(signed)
-CloudConfigCms.requireIdentity(signed, invitation.vin, signed.ownerId)
-```
-
-Через фасад:
-
-```kotlin
-SgwRegistry.parseMobDevCloudConfig(jsonBytes)
-SgwRegistry.verifyCloudConfiguration(dto)
-SgwRegistry.cloudConfigToText(dto)
-SgwRegistry.resignCloudConfigPem(request)
-SgwRegistry.parseInvitationContext(respContextBytes)
-SgwRegistry.buildCloudConfigurationFromContext(invitation, ownerCertDer, ownerKey, payloadVersion = 5)
-```
-
-### JVM-примеры (`registry-examples`)
+## JVM-примеры (`registry-examples`)
 
 Модуль `samples/registry-examples` — CLI для отладки API на desktop.  
 Зависимость: `implementation(project(":sgw-registry"))` — публикация в Maven не нужна.
@@ -1055,7 +1237,7 @@ SgwRegistry.buildCloudConfigurationFromContext(invitation, ownerCertDer, ownerKe
 Рабочий каталог Gradle: **корень репозитория** (родитель `kotlin/`).  
 Gradle передаёт `sgw.registry.repoRoot`; пути в аргументах — относительные от корня.
 
-#### Структура CLI
+### Структура CLI
 
 ```bash
 ./gradlew :samples:registry-examples:run --args="<command> [args...]"
@@ -1070,16 +1252,19 @@ Gradle передаёт `sgw.registry.repoRoot`; пути в аргумента�
 
 Иначе: `Unknown command: …`.
 
-#### Быстрый старт
+### Быстрый старт
 
 ```bash
 cd kotlin
 ./gradlew :samples:registry-examples:runAll               # .p12 сценарии
 ./gradlew :samples:registry-examples:runCloud-config        # mob-dev CMS
 ./gradlew :samples:registry-examples:runCloud-config-trust  # identity → PKIX → CMS
+./gradlew :samples:registry-examples:runCloud-config-from-context  # invitation → TBOX
+./gradlew :samples:registry-examples:runSign-tbox           # TBOX → cloud_config_pem
+./gradlew :samples:registry-examples:runEmpty-owner         # пустой owner.p12
 ```
 
-#### Сокращённые Gradle-задачи
+### Сокращённые Gradle-задачи
 
 | Gradle-задача | CLI | Сценарий |
 |---------------|-----|----------|
@@ -1088,11 +1273,15 @@ cd kotlin
 | `runAnalyze` | `analyze [file.p12]` | Отчёт + экспорт |
 | `runConfig` | `config [config.json]` | ConfigLoader |
 | `runBuild` | `build [config.json] [out.p12]` | Сборка .p12 |
+| `runEmpty-owner` | `empty-owner [cfg] [out] [vin] [uid] [verTs] [verN]` | пустой подписанный .p12 |
+| `runEmpty-owner-unsigned` | `empty-owner-unsigned [outPrefix] …` | SafeContents + header draft |
 | `runAdd-cert` | `add-cert [in] [cfg] [out] [idx]` | add + resign |
 | `runRemove-cert` | `remove-cert [in] [cfg] [out] [skid]` | remove + resign |
 | `runUpdate-registry` | `update-registry [in] [cfg] [added] [final]` | add → remove round-trip |
 | `runCloud-config` | `cloud-config [mob.json] [cfg] [out]` | mob-dev CMS |
 | `runCloud-config-trust` | `cloud-config-trust [mob.json] [vin] [owner_id] [ownership-ca.pem]` | identity → PKIX → CMS |
+| `runCloud-config-from-context` | `cloud-config-from-context [resp.json] [cfg] [v] [out]` | invitation → TBOX JSON |
+| `runSign-tbox` | `sign-tbox [tbox.json] [cfg] [outPrefix] [vin] [fqdnId] [owner_id]` | TBOX → CMS PEM |
 | `runAll` | `all [file.p12]` | все .p12 (**без** cloud-config) |
 
 С сокращённой задачей (`runCloud-config`, `runCloud-config-trust`, …) в `--args` можно передать **только пути** — имя команды подставится автоматически:
@@ -1104,7 +1293,7 @@ cd kotlin
 
 С общей задачей `run` имя команды в `--args` **обязательно**.
 
-#### `.p12` реестры
+### `.p12` реестры
 
 ```bash
 ./gradlew :samples:registry-examples:run --args="parse demo-original-container.p12"
@@ -1113,7 +1302,7 @@ cd kotlin
 ./gradlew :samples:registry-examples:run --args="remove-cert kotlin-out/registry-with-added-cert.p12 config.json kotlin-out/after-remove.p12"
 ```
 
-#### Cloud configuration (`cloud-config`)
+### Cloud configuration (`cloud-config`)
 
 ```bash
 # parse + verify
@@ -1142,7 +1331,7 @@ cd kotlin
 
 Исходник: `samples/registry-examples/.../CloudConfigExample.kt`.
 
-#### Cloud config trust (`cloud-config-trust`)
+### Cloud config trust (`cloud-config-trust`)
 
 ```bash
 ./gradlew :samples:registry-examples:runCloud-config-trust
@@ -1171,31 +1360,104 @@ cd kotlin
 
 Исходник: `CloudConfigTrustExample.kt`, PKIX — `JvmCertificateTrust.kt`.
 
-#### Необходимые файлы (корень репозитория)
+### Invitation → TBOX (`cloud-config-from-context`)
+
+```bash
+./gradlew :samples:registry-examples:runCloud-config-from-context
+
+./gradlew :samples:registry-examples:run --args="cloud-config-from-context resp-context.json config.json 5"
+
+# свой путь выхода
+./gradlew :samples:registry-examples:run --args="cloud-config-from-context resp-context.json config.json 5 kotlin-out/my-tbox.json"
+```
+
+| Аргумент | По умолчанию |
+|----------|--------------|
+| invitation JSON | `resp-context.json` |
+| config.json | `config.json` (demo signer) |
+| `v` | `5` |
+| out TBOX JSON | `kotlin-out/cloud-config-tbox.json` |
+
+Пишет:
+
+| Файл | Содержимое |
+|------|------------|
+| `*.json` (out) | TBOX payload `{ v, cloudBroker }` с CES FQDN |
+| `*.envelope.json` | mob-dev envelope + CMS (для trust / отладки) |
+
+FQDN: `hashB(vin)-{tenant_id}.mqtt.atom.auto` (если `tenant_id` пуст — ownership UID).  
+Demo signer из `config.json` → CMS OK; `requireOwnerIdInSigner` может быть skipped.
+
+Исходник: `CloudConfigFromContextExample.kt`.
+
+### Подпись TBOX (`sign-tbox`)
+
+```bash
+./gradlew :samples:registry-examples:runSign-tbox
+
+# vin + fqdnId(tenant_id) + owner_id
+./gradlew :samples:registry-examples:run --args="sign-tbox \
+  kotlin-out/cloud-config-tbox.json config.json kotlin-out/cloud-config-tbox-signed \
+  EAY1F1C56T2000014 2281305f-4b16-4a49-989a-9abeeac2df20 9c1dc2f4-a015-46b7-b88f-a9e30d0a9f86"
+```
+
+| Аргумент | Смысл |
+|----------|--------|
+| tbox.json | вход `{ v, cloudBroker }` |
+| config.json | signer |
+| outPrefix | без расширения → `{prefix}.pem` + `{prefix}.envelope.json` |
+| vin | hashB + envelope |
+| fqdnId | id после `hashB(VIN)-` (tenant_id или owner UID) |
+| owner_id | для envelope / `cloud-config-trust` |
+
+`.pem` = аналог поля `cloud_config_pem` (`-----BEGIN CMS-----`).  
+Pretty TBOX нормализуется в compact eContent перед подписью; при vin+fqdnId — CES resolve `baseDomain`.
+
+Исходник: `SignTboxCloudConfigExample.kt`.
+
+### Empty owner.p12 (`empty-owner` / `empty-owner-unsigned`)
+
+```bash
+# подписанный пустой реестр (0 SafeBag) + VIN/UID/VER
+./gradlew :samples:registry-examples:run --args="empty-owner owner-empty-config.json kotlin-out/owner.p12"
+
+# произвольные заголовочные attrs
+./gradlew :samples:registry-examples:run --args="empty-owner owner-empty-config.json kotlin-out/owner.p12 CUSTOM-VIN 'CN=Demo' 2026-03-01T08:30:00Z 7"
+
+# без подписи: SafeContents.der + header.json
+./gradlew :samples:registry-examples:run --args="empty-owner-unsigned kotlin-out/owner-unsigned"
+```
+
+| Команда | Результат |
+|---------|-----------|
+| `empty-owner` | валидный PFX v3 + CMS, `safeBags: []`, `verifyRegistry` OK |
+| `empty-owner-unsigned` | только `*.safecontents.der` + `*.header.json` (черновик VIN/UID/VER) |
+
+Конфиг: `owner-empty-config.json` (`"safeBags": []`).  
+Исходники: `EmptyOwnerP12Example.kt`, `EmptyOwnerUnsignedExample.kt`.
+
+### Необходимые файлы (корень репозитория)
 
 | Файл | Назначение |
 |------|------------|
 | `demo-original-container.p12` | .p12 примеры |
-| `config.json`, `certs/` | build, add/remove, resign |
+| `config.json`, `certs/` | build, add/remove, resign, sign-tbox |
 | `mob-dev-cloud_config.json` | исходный cloud-config (owner-leaf) |
+| `resp-context.json` | invitation → TBOX |
+| `owner-empty-config.json` | empty-owner |
 | `certs/ATOM Ownership CA.pem` | intermediate для PKIX CMS |
 | `certs/ATOM ROOT ext CA.pem` | extra trust anchor для PKIX CMS |
+| `kotlin-out/cloud-config-tbox.json` | TBOX payload |
+| `kotlin-out/cloud-config-tbox-signed.pem` | CMS PEM после sign-tbox |
 | `kotlin-out/mob-dev-cloud_config-resigned.json` | результат `cloud-config` + resign (test signer) |
-#### Тесты (JVM / iOS / Android)
+
+### Тесты (JVM / iOS / Android)
 
 ```bash
 ./gradlew :sgw-registry:jvmTest
 ./gradlew :sgw-registry:iosSimulatorArm64Test
 ./gradlew :sgw-registry:testDebugUnitTest
 ```
-
-### iOS / Android
-
-- Parse/verify/resign — через `CloudConfigCms` (commonMain).
-- `signerKey` — из Keystore (Android) или Keychain (iOS); **не** использовать raw 64-byte P1363 подпись.
-- JSON и PEM — из API/backend как `ByteArray` / `String`.
-
-Unit-тесты: `CloudConfigCmsTest` (fixture `mob-dev-cloud_config.json`).
 
 ---
 
@@ -1509,7 +1771,7 @@ kotlin {
     iosSimulatorArm64()
     sourceSets {
         commonMain.dependencies {
-            implementation("com.atom:sgw-registry:2.5.0")
+            implementation("com.atom:sgw-registry:2.6.0")
         }
     }
 }
@@ -1702,19 +1964,19 @@ dependencies {
 }
 ```
 
-**Проверка Maven-артефакта** (внешний потребитель): замените на `com.atom:sgw-registry:2.5.0` и опубликуйте в `kotlin/dist/maven/`:
+**Проверка Maven-артефакта** (внешний потребитель): замените на `com.atom:sgw-registry:2.6.0` и опубликуйте в `kotlin/dist/maven/`:
 
 ```kotlin
 dependencies {
-    implementation("com.atom:sgw-registry:2.5.0")
+    implementation("com.atom:sgw-registry:2.6.0")
 }
 ```
 
 Gradle резолвит KMP metadata → JVM variant:
 
 ```
-com.atom:sgw-registry:2.5.0
-  └── com.atom:sgw-registry-jvm:2.5.0
+com.atom:sgw-registry:2.6.0
+  └── com.atom:sgw-registry-jvm:2.6.0
 ```
 
 ### Публикация перед тестами
@@ -1788,9 +2050,10 @@ cd kotlin
 | `PemEncoding.decodeSkidHex` | `IllegalArgumentException` |
 | `PemUtils.decodeSkidHex` | `IllegalArgumentException` (**JVM**) |
 | `CloudConfigCms.verify*` | `IllegalStateException`, `IllegalArgumentException` |
-| `MobDevCloudConfigJson.parse` | `SerializationException` (kotlinx.serialization) |
+| `CloudConfigFromContext.*` | `IllegalArgumentException`, `IllegalStateException` |
+| `MobDevCloudConfigJson.parse` / `InvitationContextJson.parse` | `SerializationException` (kotlinx.serialization) |
 
 ---
 
-**Версия документа:** 2.5.0 (KMP: jvm, android, iosArm64, iosSimulatorArm64)  
+**Версия документа:** 2.6.0 (KMP: jvm, android, iosArm64, iosSimulatorArm64)  
 **ATOM SA Team 2026**

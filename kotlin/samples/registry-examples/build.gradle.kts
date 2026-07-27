@@ -62,7 +62,7 @@ tasks.named<JavaExec>("run") {
 listOf(
     "parse", "build", "verify", "analyze", "config",
     "add-cert", "remove-cert", "update-registry",
-    "cloud-config", "cloud-config-trust", "cloud-config-from-context",
+    "cloud-config", "cloud-config-trust", "cloud-config-from-context", "sign-tbox",
     "empty-owner", "empty-owner-unsigned", "all",
 ).forEach { cmd ->
     tasks.register<JavaExec>("run${cmd.replaceFirstChar { it.uppercase() }}") {
