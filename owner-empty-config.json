@@ -1,0 +1,9 @@
+{
+  "signerCert": "certs/signer.pem",
+  "signerKey": "certs/signer-key.pem",
+  "vin": "EAY2AT0MPS2013376",
+  "uid": "emailAddress=client.a@atom.team,CN=Client A,OU=Sales,O=KAMA,L=SPb,ST=SPb,C=RU",
+  "verTimestamp": "2026-07-27T12:00:00Z",
+  "verVersion": 1,
+  "safeBags": []
+}

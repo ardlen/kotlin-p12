@@ -24,7 +24,7 @@
  *
  * | Индекс | Содержимое |
  * |--------|------------|
- * | `args[0]` | Имя команды: `parse`, `verify`, `analyze`, `build`, `config`, `add-cert`, `remove-cert`, `update-registry`, `cloud-config`, `cloud-config-trust`, `all` |
+ * | `args[0]` | Имя команды: `parse`, `verify`, `analyze`, `build`, `config`, `add-cert`, `remove-cert`, `update-registry`, `cloud-config`, `cloud-config-trust`, `cloud-config-from-context`, `empty-owner`, `empty-owner-unsigned`, `all` |
  * | `args[1…]` | Позиционные аргументы команды (см. ветки [main] и [printUsage]) |
  *
  * Разрешение путей: [argPath] → [SampleSupport.resolveInputPath] (относительные от [SampleSupport.repoRoot]).
@@ -85,6 +85,44 @@ fun main(args: Array<String>) {
             val output = argPath(args, 2, SampleSupport.repoRoot.resolve("kotlin-out/built-from-config.p12"))
             Files.createDirectories(output.parent)
             BuildExample.run(SampleSupport.requireExists(config, "config.json"), output)
+        }
+
+        // ── empty-owner [owner-empty-config.json] [out.p12] [vin] [uid] [verTs] [verN]
+        // → EmptyOwnerP12Example: пустой SafeContents + произвольные VIN/UID/VER
+        "empty-owner" -> {
+            val config = argPath(args, 1, SampleSupport.repoRoot.resolve("owner-empty-config.json"))
+            val output = argPath(args, 2, SampleSupport.repoRoot.resolve("kotlin-out/owner.p12"))
+            val vin = if (args.size > 3) args[3] else null
+            val uid = if (args.size > 4) args[4] else null
+            val verTs = if (args.size > 5) args[5] else null
+            val verN = if (args.size > 6) args[6].toIntOrNull() else null
+            Files.createDirectories(output.parent)
+            EmptyOwnerP12Example.run(
+                SampleSupport.requireExists(config, "owner-empty-config.json"),
+                output,
+                vinOverride = vin,
+                uidOverride = uid,
+                verTimestampOverride = verTs,
+                verVersionOverride = verN,
+            )
+        }
+
+        // ── empty-owner-unsigned [outPrefix] [vin] [uid] [verTs] [verN]
+        // → EmptyOwnerUnsignedExample: SafeContents + header draft, без CMS / signer
+        "empty-owner-unsigned" -> {
+            val outPrefix = argPath(args, 1, SampleSupport.repoRoot.resolve("kotlin-out/owner-unsigned"))
+            val vin = if (args.size > 2) args[2] else "DRAFT-VIN"
+            val uid = if (args.size > 3) args[3] else "CN=Draft Owner"
+            val verTs = if (args.size > 4) args[4] else "2026-01-01T00:00:00Z"
+            val verN = if (args.size > 5) args[5].toIntOrNull() ?: 1 else 1
+            Files.createDirectories(outPrefix.parent)
+            EmptyOwnerUnsignedExample.run(
+                outPrefix = outPrefix,
+                vin = vin,
+                uid = uid,
+                verTimestamp = verTs,
+                verVersion = verN,
+            )
         }
 
         // ── add-cert [file.p12] [config.json] [out.p12] [bagIndex] ────────────
@@ -206,6 +244,26 @@ fun main(args: Array<String>) {
             )
         }
 
+        // ── cloud-config-from-context [resp-context.json] [config.json] [v] [out.json]
+        // → CloudConfigFromContextExample: invitation draft → signed cloud_configuration → verify
+        "cloud-config-from-context" -> {
+            val resp = argPath(args, 1, SampleSupport.repoRoot.resolve("resp-context.json"))
+            val config = argPath(args, 2, SampleSupport.defaultConfig())
+            val payloadVersion = if (args.size > 3) args[3].toIntOrNull() else 5
+            val output = if (args.size > 4) {
+                argPath(args, 4, SampleSupport.repoRoot.resolve("kotlin-out/cloud-config-from-context.json"))
+            } else {
+                SampleSupport.repoRoot.resolve("kotlin-out/cloud-config-from-context.json")
+            }
+            Files.createDirectories(output.parent)
+            CloudConfigFromContextExample.run(
+                SampleSupport.requireExists(resp, "resp-context.json"),
+                SampleSupport.requireExists(config, "config.json"),
+                output,
+                payloadVersion,
+            )
+        }
+
         // ── all [file.p12] ────────────────────────────────────────────────────
         // args[1] → .p12 для parse/verify/analyze/update (default: demo-original-container.p12)
         // → runAll: parse → verify → analyze → (если есть config) config → build → verify → update-registry
@@ -273,6 +331,10 @@ private fun printUsage() {
         |  verify [file.p12]              SignatureVerifier.*
         |  analyze [file.p12] [out-dir]   RegistryAnalyzer.*
         |  build  [config.json] [out.p12] RegistryBuilder.* + ConfigLoader.toBuildConfig
+        |  empty-owner [owner-empty-config.json] [out.p12] [vin] [uid] [verTs] [verN]
+        |                                 пустой SafeContents + VIN/UID/VER в заголовке (CMS)
+        |  empty-owner-unsigned [outPrefix] [vin] [uid] [verTs] [verN]
+        |                                 без подписи: SafeContents.der + header.json
         |  add-cert [file.p12] [config.json] [out.p12] [bagIndex]
         |                                 RegistryBuilder.addCertificateAndResign
         |  remove-cert [file.p12] [config.json] [out.p12] [skidHex]
@@ -286,6 +348,8 @@ private fun printUsage() {
         |                                 CloudConfigCms parse/verify/resign cloud_config_pem
         |  cloud-config-trust [mob.json] [vin] [owner_id] [ownership-ca.pem]
         |                                 identity → PKIX(root_cas) → CMS signature
+        |  cloud-config-from-context [resp-context.json] [config.json] [v] [out.json]
+        |                                 invitation → signed cloud_configuration → verify
         |  all    [file.p12]              all of the above
         |
         |Defaults (cwd = repo root via Gradle workingDir):

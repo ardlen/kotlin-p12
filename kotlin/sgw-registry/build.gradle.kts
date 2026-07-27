@@ -91,6 +91,7 @@ val syncIosTestFixtures = tasks.register<Sync>("syncIosTestFixtures") {
             "demo-original-container.p12",
             "spas-delegate.p12",
             "mob-dev-cloud_config.json",
+            "resp-context.json",
             "config.json",
             "infotainment_client.pem",
             "certs/**",

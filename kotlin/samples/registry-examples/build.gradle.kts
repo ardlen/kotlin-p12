@@ -15,6 +15,7 @@
  * ./gradlew :samples:registry-examples:runRemove-cert
  * ./gradlew :samples:registry-examples:runCloud-config
  * ./gradlew :samples:registry-examples:runCloud-config-trust
+ * ./gradlew :samples:registry-examples:runCloud-config-from-context
  * ./gradlew :samples:registry-examples:runAll
  * ```
  *
@@ -61,7 +62,8 @@ tasks.named<JavaExec>("run") {
 listOf(
     "parse", "build", "verify", "analyze", "config",
     "add-cert", "remove-cert", "update-registry",
-    "cloud-config", "cloud-config-trust", "all",
+    "cloud-config", "cloud-config-trust", "cloud-config-from-context",
+    "empty-owner", "empty-owner-unsigned", "all",
 ).forEach { cmd ->
     tasks.register<JavaExec>("run${cmd.replaceFirstChar { it.uppercase() }}") {
         group = "application"

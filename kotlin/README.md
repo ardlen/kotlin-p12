@@ -812,6 +812,26 @@ SKID сопоставляется с `localKeyID` SafeBag и с расширен
 
 Полный справочник методов: [API.md — CloudConfigCms](API.md#cloud-config--cloudconfigcms-mob-dev).
 
+### Invitation / resp-context → signed cloud_configuration
+
+Вход сервиса invitation (`resp-context.json`): `context.vehicle_cloud_configuration` (snake_case draft) + `ownership_registry` (CMS с leaf UID).
+
+`CloudConfigFromContext` собирает camelCase payload (`v` / `cloudBroker.rootCAs` / `endpoint`) и подписывает CMS:
+
+```kotlin
+val response = CloudConfigFromContext.parseInvitationResponse(bytes)
+val signed = CloudConfigFromContext.buildAndSign(
+    response, ownerCertDer, ownerKey, payloadVersion = 5,
+)
+CloudConfigCms.verifyCloudConfiguration(signed)
+```
+
+JVM-пример:
+
+```bash
+./gradlew :samples:registry-examples:run --args="cloud-config-from-context resp-context.json config.json 5"
+```
+
 ### Формат
 
 ```json
@@ -1064,11 +1084,14 @@ cd kotlin
 | `runAnalyze` | `analyze` | Отчёт, JSON, экспорт PEM |
 | `runConfig` | `config` | `ConfigLoader` + SKID signer |
 | `runBuild` | `build` | Сборка `.p12` из `config.json` |
+| `runEmpty-owner` | `empty-owner` | Пустой `owner.p12` (0 SafeBag) + VIN/UID/VER |
+| `runEmpty-owner-unsigned` | `empty-owner-unsigned` | Без подписи: SafeContents.der + header.json |
 | `runAdd-cert` | `add-cert` | Добавить SafeBag + переподпись |
 | `runRemove-cert` | `remove-cert` | Удалить SafeBag по SKID |
 | `runUpdate-registry` | `update-registry` | add → verify → remove (round-trip) |
 | `runCloud-config` | `cloud-config` | mob-dev JSON: parse/verify/resign CMS |
 | `runCloud-config-trust` | `cloud-config-trust` | identity → PKIX(root_cas + ROOT ext) → CMS signature |
+| `runCloud-config-from-context` | `cloud-config-from-context` | resp-context → signed cloud_configuration → verify |
 | `runAll` | `all` | Все `.p12` сценарии (**без** cloud-config) |
 
 С `--args` можно передать только пути (имя команды подставится автоматически):

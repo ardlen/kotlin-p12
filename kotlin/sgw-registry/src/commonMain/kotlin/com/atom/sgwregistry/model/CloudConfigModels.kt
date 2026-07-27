@@ -143,3 +143,72 @@ object MobDevCloudConfigJson {
     fun parse(text: String): MobDevCloudConfigResponse =
         json.decodeFromString(MobDevCloudConfigResponse.serializer(), text)
 }
+
+/**
+ * Ответ B2B invitation / Virtual Device (`resp-context.json`):
+ * `context.vehicle_cloud_configuration` + `ownership_registry` → signed `cloud_configuration`.
+ */
+@Serializable
+data class InvitationContextResponse(
+    val context: InvitationContextDto = InvitationContextDto(),
+    val id: String = "",
+    val status: String = "",
+    @SerialName("tenant_id") val tenantId: String = "",
+    val vin: String = "",
+)
+
+@Serializable
+data class InvitationContextDto(
+    @SerialName("ownership_registry") val ownershipRegistry: String = "",
+    @SerialName("vehicle_cloud_configuration") val vehicleCloudConfiguration: VehicleCloudConfigurationDraft = VehicleCloudConfigurationDraft(),
+    @SerialName("vehicle_mtls_cert_pem") val vehicleMtlsCertPem: String = "",
+    @SerialName("vehicle_mtls_cert_sha256") val vehicleMtlsCertSha256: String = "",
+)
+
+@Serializable
+data class VehicleCloudConfigurationDraft(
+    @SerialName("cloud_broker") val cloudBroker: VehicleCloudBrokerDraft = VehicleCloudBrokerDraft(),
+    @SerialName("current_version") val currentVersion: Int = 1,
+)
+
+@Serializable
+data class VehicleCloudBrokerDraft(
+    val endpoint: VehicleCloudEndpointDraft = VehicleCloudEndpointDraft(),
+    @SerialName("root_cas") val rootCas: List<String> = emptyList(),
+)
+
+@Serializable
+data class VehicleCloudEndpointDraft(
+    @SerialName("base_domain") val baseDomain: String = "",
+    @SerialName("fqdn_constr_alg") val fqdnConstrAlg: Int = 1,
+    val url: String = "",
+)
+
+/** camelCase payload внутри `cloud_config_json` (eContent CMS). */
+@Serializable
+data class CloudBrokerConfigPayload(
+    val v: Int,
+    val cloudBroker: CloudBrokerConfigBody,
+)
+
+@Serializable
+data class CloudBrokerConfigBody(
+    val rootCAs: List<String>,
+    val endpoint: CloudBrokerEndpointPayload,
+)
+
+@Serializable
+data class CloudBrokerEndpointPayload(
+    val fqdnConstrAlg: Int,
+    val baseDomain: String,
+)
+
+object InvitationContextJson {
+    private val json = Json { ignoreUnknownKeys = true }
+
+    fun parse(bytes: ByteArray): InvitationContextResponse =
+        json.decodeFromString(InvitationContextResponse.serializer(), bytes.decodeToString())
+
+    fun parse(text: String): InvitationContextResponse =
+        json.decodeFromString(InvitationContextResponse.serializer(), text)
+}

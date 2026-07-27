@@ -114,6 +114,36 @@ object SgwRegistry : RegistryParserService, RegistryBuilderService, SignatureVer
         signerKey: com.atom.sgwregistry.crypto.SigningKey,
     ) = com.atom.sgwregistry.cloudconfig.CloudConfigCms.resignConfigurationOnly(dto, signerCertDer, signerKey)
 
+    fun resignCloudConfiguration(
+        dto: com.atom.sgwregistry.model.CloudConfigurationDto,
+        signerCertDer: ByteArray,
+        signerKey: com.atom.sgwregistry.crypto.SigningKey,
+    ) = com.atom.sgwregistry.cloudconfig.CloudConfigCms.resignConfiguration(dto, signerCertDer, signerKey)
+
     fun cloudConfigToText(dto: com.atom.sgwregistry.model.CloudConfigurationDto) =
         com.atom.sgwregistry.cloudconfig.CloudConfigCms.toText(dto)
+
+    fun parseInvitationContext(bytes: ByteArray) =
+        com.atom.sgwregistry.cloudconfig.CloudConfigFromContext.parseInvitationResponse(bytes)
+
+    fun parseInvitationContext(text: String) =
+        com.atom.sgwregistry.cloudconfig.CloudConfigFromContext.parseInvitationResponse(text)
+
+    fun buildCloudConfigurationFromContext(
+        response: com.atom.sgwregistry.model.InvitationContextResponse,
+        signerCertDer: ByteArray,
+        signerKey: com.atom.sgwregistry.crypto.SigningKey,
+        payloadVersion: Int? = null,
+        configurationId: String? = null,
+        ownerId: String? = null,
+        alignOwnerIdWithSigner: Boolean = false,
+    ) = com.atom.sgwregistry.cloudconfig.CloudConfigFromContext.buildAndSign(
+        response = response,
+        signerCertDer = signerCertDer,
+        signerKey = signerKey,
+        payloadVersion = payloadVersion,
+        configurationId = configurationId,
+        ownerId = ownerId,
+        alignOwnerIdWithSigner = alignOwnerIdWithSigner,
+    )
 }

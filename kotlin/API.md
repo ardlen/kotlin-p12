@@ -944,6 +944,21 @@ object CloudConfigCms
 | `resignConfigurationOnly(dto, cert, key)` | Только `cloud_config_pem`; JSON не меняется |
 | `toText(container\|dto)` | Отчёт для лога/UI |
 
+### `CloudConfigFromContext`
+
+```kotlin
+object CloudConfigFromContext
+```
+
+| Метод | Описание |
+|-------|----------|
+| `parseInvitationResponse(bytes\|text)` | `resp-context.json` → `InvitationContextResponse` |
+| `extractOwnerIdFromOwnershipCms(pem)` | UID leaf из `ownership_registry` (PFX v3 или CMS) |
+| `buildCloudConfigJson(draft, payloadVersion?)` | snake_case draft → camelCase `cloud_config_json` |
+| `buildUnsignedConfiguration(...)` | DTO без `cloud_config_pem` |
+| `buildAndSign(..., signerCert, key, payloadVersion?)` | payload + CMS (`resignToPem`) |
+| `encodeMobDevResponse(dto)` | JSON `{ "cloud_configuration": ... }` |
+
 ### `CloudConfigResignRequest` — пересборка из JSON
 
 ```kotlin
@@ -1007,6 +1022,20 @@ val updated = CloudConfigCms.resignConfigurationOnly(
 // CloudConfigCms.resignConfiguration(dto, ownerCertDer, signingKey)
 ```
 
+### Invitation context → signed cloud_configuration
+
+```kotlin
+val invitation = CloudConfigFromContext.parseInvitationResponse(respContextBytes)
+val signed = CloudConfigFromContext.buildAndSign(
+    response = invitation,
+    signerCertDer = ownerCertDer,
+    signerKey = ownerKey,
+    payloadVersion = 5, // поле "v" в cloud_config_json
+)
+CloudConfigCms.verifyCloudConfiguration(signed)
+CloudConfigCms.requireIdentity(signed, invitation.vin, signed.ownerId)
+```
+
 Через фасад:
 
 ```kotlin
@@ -1014,6 +1043,8 @@ SgwRegistry.parseMobDevCloudConfig(jsonBytes)
 SgwRegistry.verifyCloudConfiguration(dto)
 SgwRegistry.cloudConfigToText(dto)
 SgwRegistry.resignCloudConfigPem(request)
+SgwRegistry.parseInvitationContext(respContextBytes)
+SgwRegistry.buildCloudConfigurationFromContext(invitation, ownerCertDer, ownerKey, payloadVersion = 5)
 ```
 
 ### JVM-примеры (`registry-examples`)
