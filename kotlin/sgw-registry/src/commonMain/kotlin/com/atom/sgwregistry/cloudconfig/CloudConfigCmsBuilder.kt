@@ -3,6 +3,7 @@
  */
 package com.atom.sgwregistry.cloudconfig
 
+import com.atom.sgwregistry.asn1.AsnReader
 import com.atom.sgwregistry.asn1.AsnWriter
 import com.atom.sgwregistry.asn1.DerUtils
 import com.atom.sgwregistry.asn1.Oids
@@ -169,13 +170,18 @@ object CloudConfigCmsBuilder {
         return DerUtils.prependTlv(0xA0, octet)
     }
 
+    /**
+     * IssuerAndSerialNumber как в RFC 5652 SignerIdentifier:
+     * нетегированная SEQUENCE { IssuerName, CertificateSerialNumber }.
+     * (Вариант с обёрткой [1] остаётся только в RegistryBuilder для .p12.)
+     */
     private fun marshalIssuerAndSerial(issuerDer: ByteArray, serialBytes: ByteArray): ByteArray {
-        val inner = AsnWriter()
-        inner.pushSequence()
-        inner.writeEncodedValue(issuerDer)
-        inner.writeIntegerBytes(serialBytes)
-        inner.popSequence()
-        return DerUtils.prependTlv(0xA1, inner.encode())
+        val w = AsnWriter()
+        w.pushSequence()
+        w.writeEncodedValue(issuerDer)
+        w.writeIntegerBytes(serialBytes)
+        w.popSequence()
+        return w.encode()
     }
 
     private fun buildEncapsulatedContentInfo(eContent: ByteArray): ByteArray {
@@ -189,15 +195,25 @@ object CloudConfigCmsBuilder {
         return w.encode()
     }
 
+    /**
+     * CertificateSet в формате CMS/PKCS#7 (OpenSSL-совместимо):
+     * certificates [0] IMPLICIT SET OF Certificate,
+     * где Certificate — сырой X.509 DER (SEQUENCE), **без** OCTET STRING.
+     *
+     * Старый формат ATOM `.p12` (SET OF OCTET STRING(cert)) намеренно
+     * остаётся в [RegistryBuilder.marshalCertificateSet].
+     */
     private fun marshalCertificateSet(certsRaw: Array<ByteArray>): ByteArray {
-        val list = certsRaw.map { raw ->
-            val ow = AsnWriter()
-            ow.writeOctetString(raw)
-            ow.encode()
-        }.sortedWith { a, b -> DerUtils.compareDer(a, b) }
+        val list = certsRaw.sortedWith { a, b -> DerUtils.compareDer(a, b) }
         val w = AsnWriter()
-        w.pushSetOf()
-        for (c in list) w.writeEncodedValue(c)
+        // pushSetOf(0) → тег [0] IMPLICIT, содержимое = элементы SET OF Certificate
+        w.pushSetOf(0)
+        for (certDer in list) {
+            require(certDer.isNotEmpty() && (certDer[0].toInt() and 0xFF) == DerUtils.TAG_SEQUENCE) {
+                "signer certificate must be X.509 DER SEQUENCE"
+            }
+            w.writeEncodedValue(certDer)
+        }
         w.popSequence()
         return w.encode()
     }
@@ -211,19 +227,32 @@ object CloudConfigCmsBuilder {
         w.writeObjectIdentifier(Oids.sha256)
         w.writeNull()
         w.popSequence()
-        w.pushSequence(0)
-        w.writeEncodedValue(authAttrsDer)
-        w.popSequence()
+        // signedAttrs [0] IMPLICIT SET OF Attribute (не EXPLICIT [0] + SET)
+        writeImplicitContextSet(w, contextTag = 0, setDer = authAttrsDer)
         w.pushSequence()
         w.writeObjectIdentifier(Oids.ecdsaWithSha256)
-        w.writeNull()
+        // ECDSA: parameters ABSENT (не NULL) — так ожидает OpenSSL CMS
         w.popSequence()
         w.writeOctetString(signatureDer)
-        w.pushSequence(1)
-        w.writeEncodedValue(byteArrayOf(0x31, 0x00))
-        w.popSequence()
+        // unsignedAttrs опускаем, если пустые
         w.popSequence()
         return w.encode()
+    }
+
+    /**
+     * Пишет `[contextTag] IMPLICIT SET OF …`: тег A0/A1 заменяет тег SET,
+     * внутри — элементы SET как есть. Нужно для OpenSSL CMS.
+     */
+    private fun writeImplicitContextSet(w: AsnWriter, contextTag: Int, setDer: ByteArray) {
+        require(setDer.isNotEmpty() && (setDer[0].toInt() and 0xFF) == DerUtils.TAG_SET) {
+            "expected DER SET for IMPLICIT context[$contextTag]"
+        }
+        val set = AsnReader(setDer).readSet()
+        w.pushSetOf(contextTag)
+        while (set.hasData()) {
+            w.writeEncodedValue(set.readEncodedValue())
+        }
+        w.popSequence()
     }
 
     private fun buildSignedDataDer(encap: ByteArray, certSet: ByteArray, signerInfo: ByteArray): ByteArray {
@@ -237,9 +266,8 @@ object CloudConfigCmsBuilder {
         w.popSequence()
         w.popSequence()
         w.writeEncodedValue(encap)
-        w.pushSequence(0)
+        // certSet уже содержит certificates [0] IMPLICIT …
         w.writeEncodedValue(certSet)
-        w.popSequence()
         w.pushSetOf()
         w.writeEncodedValue(signerInfo)
         w.popSequence()

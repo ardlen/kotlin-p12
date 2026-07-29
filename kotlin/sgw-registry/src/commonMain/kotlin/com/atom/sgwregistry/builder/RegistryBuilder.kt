@@ -269,6 +269,12 @@ object RegistryBuilder : RegistryBuilderService {
         return w.encode()
     }
 
+    /**
+     * CertificateSet для ATOM `.p12` реестра: SET OF OCTET STRING(cert DER).
+     * Это исторический wire-format экосистемы; **не** менять на голый Certificate —
+     * иначе сломается совместимость с существующими контейнерами.
+     * Для mob-dev / TBOX CMS (OpenSSL) см. CloudConfigCmsBuilder.marshalCertificateSet.
+     */
     private fun marshalCertificateSet(certsRaw: Array<ByteArray>): ByteArray {
         val list = certsRaw.map { raw ->
             val ow = AsnWriter()

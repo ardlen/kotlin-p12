@@ -115,6 +115,29 @@ class CloudConfigCmsTest {
     }
 
     @Test
+    fun resignProducesOpensslFriendlyCertificateEncoding() {
+        // Cloud-config CMS: Certificate как SEQUENCE (не OCTET STRING), SID = IssuerAndSerial SEQUENCE.
+        if (!TestFixtures.exists("mob-dev-cloud_config.json")) return
+        if (!TestBuildConfig.exists()) return
+        val dto = loadMobDev().cloudConfiguration
+        val buildCfg = TestBuildConfig.load()
+        val newPem = CloudConfigCms.resignToPem(
+            CloudConfigResignRequest(
+                jsonPayload = dto.cloudConfigJson,
+                signerCertDer = buildCfg.signerCertDer,
+                signerKey = buildCfg.signerKey,
+            ),
+        )
+        val resigned = CloudConfigCms.parsePem(newPem)
+        CloudConfigCms.verify(resigned)
+        assertTrue(resigned.signerCertResolved)
+        // IssuerAndSerialNumber — нетегированная SEQUENCE (0x30), не [1]/0xA1
+        assertEquals(0x30, resigned.firstSignerSidTag)
+        assertTrue(resigned.certificatesDer.isNotEmpty())
+        assertEquals(0x30, resigned.certificatesDer[0][0].toInt() and 0xFF)
+    }
+
+    @Test
     fun registryParserParseCmsWorksOnMobDevPem() {
         if (!TestFixtures.exists("mob-dev-cloud_config.json")) return
         val dto = loadMobDev().cloudConfiguration
