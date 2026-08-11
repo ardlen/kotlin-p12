@@ -41,7 +41,7 @@ object CloudBrokerFqdn {
      * Полный FQDN для `endpoint.baseDomain` в signed / TBOX payload.
      *
      * @param domainSuffix суффикс из invitation (`mqtt.atom.auto`)
-     * @param identityId   CES: ownerID (UID leaf); в invitation-примере — `tenant_id`
+     * @param identityId   CES: ownerID (UID Ownership leaf / `owner_id`)
      */
     fun buildFqdn(
         vin: String,
@@ -73,6 +73,27 @@ object CloudBrokerFqdn {
         return buildFqdn(vin, identityId, d, fqdnConstrAlg)
     }
 
+    /**
+     * Проверяет, что первая метка FQDN = `{hashB}-{ownerId}` (CES §5, alg=1).
+     * Пример: `f050-d231b684-82b4-….mqtt.stage.atom.auto`.
+     */
+    fun containsOwnerId(fqdn: String, ownerId: String): Boolean {
+        val id = ownerId.trim()
+        if (id.isEmpty()) return false
+        val host = fqdn.trim().substringBefore(':')
+        val label = host.substringBefore('.', missingDelimiterValue = "")
+        val suffix = "-$id"
+        if (!label.endsWith(suffix, ignoreCase = true)) return false
+        val hashPart = label.dropLast(suffix.length)
+        return hashPart.length == 4 && hashPart.all { it in HEX }
+    }
+
+    fun requireOwnerId(fqdn: String, ownerId: String) {
+        require(containsOwnerId(fqdn, ownerId)) {
+            "endpoint.baseDomain FQDN must embed owner_id=$ownerId (got: $fqdn)"
+        }
+    }
+
     private fun looksLikeConstructedFqdn(value: String, identityId: String): Boolean {
         val host = value.substringBefore(':') // strip optional :port
         val prefix = host.substringBefore('.', missingDelimiterValue = "")
@@ -80,4 +101,6 @@ object CloudBrokerFqdn {
             prefix.contains(identityId, ignoreCase = true) &&
             host.count { it == '.' } >= 2
     }
+
+    private val HEX = "0123456789abcdefABCDEF"
 }

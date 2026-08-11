@@ -13,6 +13,8 @@ object Oids {
     val pkcs7Data = intArrayOf(1, 2, 840, 113549, 1, 7, 1)
 
     // --- PKCS#9 атрибуты ---
+    /** extensionRequest в PKCS#10 CSR (Requested Extensions). */
+    val pkcs9ExtensionRequest = intArrayOf(1, 2, 840, 113549, 1, 9, 14)
     /** contentType в authenticatedAttributes. */
     val pkcs9ContentType = intArrayOf(1, 2, 840, 113549, 1, 9, 3)
     /** messageDigest — хеш eContent (SHA-256). */
@@ -44,11 +46,28 @@ object Oids {
     /** Период действия роли: notBefore + notAfter. */
     val atomRoleValidityPeriod = intArrayOf(1, 3, 6, 1, 4, 1, 99999, 1, 5)
 
-    // --- Алгоритмы ---
+    // --- Алгоритмы / EC ---
     /** SHA-256 (digestAlgorithm). */
     val sha256 = intArrayOf(2, 16, 840, 1, 101, 3, 4, 2, 1)
     /** ECDSA с SHA-256 (signatureAlgorithm, P-256). */
     val ecdsaWithSha256 = intArrayOf(1, 2, 840, 10045, 4, 3, 2)
+    /** id-ecPublicKey. */
+    val ecPublicKey = intArrayOf(1, 2, 840, 10045, 2, 1)
+    /** prime256v1 / secp256r1. */
+    val prime256v1 = intArrayOf(1, 2, 840, 10045, 3, 1, 7)
+
+    // --- X.509 extensions / DN ---
+    val extensionKeyUsage = intArrayOf(2, 5, 29, 15)
+    val extensionSubjectAltName = intArrayOf(2, 5, 29, 17)
+    val extensionExtendedKeyUsage = intArrayOf(2, 5, 29, 37)
+    /** id-kp-emailProtection — EKU для CMS cloud_config. */
+    val idKpEmailProtection = intArrayOf(1, 3, 6, 1, 5, 5, 7, 3, 4)
+    /** id-kp-clientAuth — не использовать для Ownership CMS. */
+    val idKpClientAuth = intArrayOf(1, 3, 6, 1, 5, 5, 7, 3, 2)
+    val attrOrganizationName = intArrayOf(2, 5, 4, 10)
+    val attrOrganizationalUnitName = intArrayOf(2, 5, 4, 11)
+    /** UID (LDAP). */
+    val attrUid = intArrayOf(0, 9, 2342, 19200300, 100, 1, 1)
 
     /** Сравнение двух OID-массивов поэлементно. */
     fun oidEquals(a: IntArray?, b: IntArray?): Boolean {

@@ -54,6 +54,13 @@ object PemEncoding {
         return "-----BEGIN CMS-----\n${b64.chunked(64).joinToString("\n")}\n-----END CMS-----\n"
     }
 
+    fun csrToPem(csrDer: ByteArray): String {
+        val b64 = Base64.encode(csrDer)
+        return "-----BEGIN CERTIFICATE REQUEST-----\n" +
+            "${b64.chunked(64).joinToString("\n")}\n" +
+            "-----END CERTIFICATE REQUEST-----\n"
+    }
+
     fun decodeSkidHex(hex: String): ByteArray {
         val cleaned = hex.trim()
             .replace("0x", "", ignoreCase = true)

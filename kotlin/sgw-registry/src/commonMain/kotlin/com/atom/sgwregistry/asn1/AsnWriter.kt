@@ -73,6 +73,24 @@ class AsnWriter {
     fun writeUtf8String(s: String) =
         writeRaw(DerUtils.prependTlv(0x0C, s.encodeToByteArray()))
 
+    fun writePrintableString(s: String) =
+        writeRaw(DerUtils.prependTlv(0x13, s.encodeToByteArray()))
+
+    fun writeIa5String(s: String) =
+        writeRaw(DerUtils.prependTlv(0x16, s.encodeToByteArray()))
+
+    fun writeBoolean(value: Boolean) =
+        writeRaw(byteArrayOf(0x01, 0x01, if (value) 0xFF.toByte() else 0x00))
+
+    /** BIT STRING: unusedBits + content. */
+    fun writeBitString(content: ByteArray, unusedBits: Int = 0) {
+        require(unusedBits in 0..7) { "unusedBits must be 0..7" }
+        val body = ByteArray(1 + content.size)
+        body[0] = unusedBits.toByte()
+        content.copyInto(body, 1)
+        writeRaw(DerUtils.prependTlv(0x03, body))
+    }
+
     fun writeGeneralizedTime(instant: Instant) {
         val s = formatGeneralizedTimeUtc(instant)
         writeRaw(DerUtils.prependTlv(0x18, s.encodeToByteArray()))

@@ -100,6 +100,15 @@ object SgwRegistry : RegistryParserService, RegistryBuilderService, SignatureVer
     fun requireCloudConfigOwnerIdInSigner(dto: com.atom.sgwregistry.model.CloudConfigurationDto) =
         com.atom.sgwregistry.cloudconfig.CloudConfigCms.requireOwnerIdInSigner(dto)
 
+    /** owner_id ↔ FQDN ↔ SAN URI `atombus:/user/{owner_id}` ↔ EKU Email Protection. */
+    fun requireCloudConfigOwnerIdBinding(
+        dto: com.atom.sgwregistry.model.CloudConfigurationDto,
+        requireEku: Boolean = true,
+    ) = com.atom.sgwregistry.cloudconfig.CloudConfigCms.requireOwnerIdBinding(dto, requireEku = requireEku)
+
+    fun requireCloudConfigSignerEku(signerCertDer: ByteArray) =
+        com.atom.sgwregistry.cloudconfig.CloudConfigCms.requireSignerEkuForCms(signerCertDer)
+
     fun resignCloudConfigPem(request: com.atom.sgwregistry.model.CloudConfigResignRequest) =
         com.atom.sgwregistry.cloudconfig.CloudConfigCms.resignToPem(request)
 
@@ -138,6 +147,9 @@ object SgwRegistry : RegistryParserService, RegistryBuilderService, SignatureVer
         ownerId: String? = null,
         alignOwnerIdWithSigner: Boolean = false,
         fqdnIdentityId: String? = null,
+        fqdnIdentitySource: com.atom.sgwregistry.cloudconfig.CloudConfigFqdnIdentitySource =
+            com.atom.sgwregistry.cloudconfig.CloudConfigFqdnIdentitySource.OwnerId,
+        requireOwnerBinding: Boolean = true,
     ) = com.atom.sgwregistry.cloudconfig.CloudConfigFromContext.buildAndSign(
         response = response,
         signerCertDer = signerCertDer,
@@ -147,5 +159,69 @@ object SgwRegistry : RegistryParserService, RegistryBuilderService, SignatureVer
         ownerId = ownerId,
         alignOwnerIdWithSigner = alignOwnerIdWithSigner,
         fqdnIdentityId = fqdnIdentityId,
+        fqdnIdentitySource = fqdnIdentitySource,
+        requireOwnerBinding = requireOwnerBinding,
     )
+
+    // --- Ownership PKCS#10 CSR (без BouncyCastle) ---
+
+    fun buildOwnershipCsr(
+        request: com.atom.sgwregistry.csr.OwnershipCsrRequest,
+        key: com.atom.sgwregistry.crypto.SigningKey,
+        publicKeySpki: ByteArray,
+    ) = com.atom.sgwregistry.csr.OwnershipCsr.build(request, key, publicKeySpki)
+
+    fun buildOwnershipCsrFromEcPrivateKeyPem(
+        request: com.atom.sgwregistry.csr.OwnershipCsrRequest,
+        ecPrivateKeyPemOrDer: ByteArray,
+    ) = com.atom.sgwregistry.csr.OwnershipCsr.buildFromEcPrivateKeyPem(request, ecPrivateKeyPemOrDer)
+
+    // --- Ownership statement ledger (ownership_registry[] CMS) ---
+
+    fun verifyOwnershipRegistry(
+        ownershipRegistryCms: List<String>,
+        ownerId: String,
+        vin: String,
+    ) = com.atom.sgwregistry.ownership.OwnershipRegistryVerifier.verify(
+        ownershipRegistryCms,
+        ownerId,
+        vin,
+    )
+
+    fun tryVerifyOwnershipRegistry(
+        ownershipRegistryCms: List<String>,
+        ownerId: String,
+        vin: String,
+    ) = com.atom.sgwregistry.ownership.OwnershipRegistryVerifier.tryVerify(
+        ownershipRegistryCms,
+        ownerId,
+        vin,
+    )
+
+    /** Envelope `ownership-resp.json` → [com.atom.sgwregistry.ownership.OwnershipRegistryVerifier.verifyLedger]. */
+    fun verifyOwnershipLedger(
+        response: com.atom.sgwregistry.ownership.OwnershipLedgerResponse,
+        ownerId: String,
+        vin: String = response.vin,
+    ) = com.atom.sgwregistry.ownership.OwnershipRegistryVerifier.verifyLedger(
+        response,
+        ownerId,
+        vin,
+    )
+
+    fun tryVerifyOwnershipLedger(
+        response: com.atom.sgwregistry.ownership.OwnershipLedgerResponse,
+        ownerId: String,
+        vin: String = response.vin,
+    ) = com.atom.sgwregistry.ownership.OwnershipRegistryVerifier.tryVerifyLedger(
+        response,
+        ownerId,
+        vin,
+    )
+
+    fun parseOwnershipLedger(bytes: ByteArray) =
+        com.atom.sgwregistry.ownership.OwnershipLedgerJson.parse(bytes)
+
+    fun parseOwnershipLedger(text: String) =
+        com.atom.sgwregistry.ownership.OwnershipLedgerJson.parse(text)
 }

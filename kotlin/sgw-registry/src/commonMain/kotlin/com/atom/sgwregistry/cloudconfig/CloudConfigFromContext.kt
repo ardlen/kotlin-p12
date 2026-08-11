@@ -114,9 +114,8 @@ object CloudConfigFromContext {
     /**
      * DTO без подписи (`cloud_config_pem` пустой).
      *
-     * FQDN в payload: `hashB(vin)-{tenant_id|ownerUID}.{mqtt…}` при alg=1.
-     * [ownerId] в DTO — UID ownership leaf (для trust); для FQDN по умолчанию берётся
-     * `tenant_id` из invitation, если он непустой (иначе ownership UID).
+     * FQDN при alg=1: `hashB(vin)-{id}.{mqtt…}`; [id] из [fqdnIdentityId] или [fqdnIdentitySource]
+     * (`owner_id` / `tenant_id` / fallback-цепочка).
      */
     fun buildUnsignedConfiguration(
         response: InvitationContextResponse,
@@ -124,13 +123,17 @@ object CloudConfigFromContext {
         configurationId: String? = null,
         ownerId: String? = null,
         fqdnIdentityId: String? = null,
+        fqdnIdentitySource: CloudConfigFqdnIdentitySource = CloudConfigFqdnIdentitySource.OwnerId,
     ): CloudConfigurationDto {
         val draft = response.context.vehicleCloudConfiguration
         val resolvedOwnerId = ownerId
             ?: extractOwnerIdFromOwnershipCms(response.context.ownershipRegistry)
-        val resolvedFqdnId = fqdnIdentityId
-            ?: response.tenantId.takeIf { it.isNotBlank() }
-            ?: resolvedOwnerId
+        val resolvedFqdnId = resolveFqdnIdentityId(
+            response = response,
+            resolvedOwnerId = resolvedOwnerId,
+            fqdnIdentityId = fqdnIdentityId,
+            fqdnIdentitySource = fqdnIdentitySource,
+        )
         val json = buildCloudConfigJson(
             draft = draft,
             payloadVersion = payloadVersion,
@@ -156,9 +159,16 @@ object CloudConfigFromContext {
     /**
      * Сборка payload + CMS-подпись owner-ключом (`resign` с пересборкой eContent из JSON).
      *
+     * Перед подписью (если [requireOwnerBinding]): `owner_id` должен совпадать с сегментом
+     * FQDN и с SAN URI `atombus:/user/{owner_id}` сертификата подписанта
+     * (и EKU Email Protection). Для FQDN из [CloudConfigFqdnIdentitySource.TenantId]
+     * при tenant ≠ owner обычно ставьте `requireOwnerBinding = false`.
+     *
      * @param alignOwnerIdWithSigner если true и в subject подписанта есть UID — `owner_id` берётся оттуда
      *   (нужно, когда signing cert ≠ leaf из ownership_registry).
-     * @param fqdnIdentityId id после hashB(VIN)- в FQDN; default tenant_id / ownership UID
+     * @param fqdnIdentityId явный id после hashB(VIN)- в FQDN; перекрывает [fqdnIdentitySource]
+     * @param fqdnIdentitySource `owner_id` / `tenant_id` / цепочка из двух полей
+     * @param requireOwnerBinding проверка owner_id ↔ FQDN ↔ SAN URI (выкл. для demo-signer без SAN)
      */
     fun buildAndSign(
         response: InvitationContextResponse,
@@ -169,21 +179,37 @@ object CloudConfigFromContext {
         ownerId: String? = null,
         alignOwnerIdWithSigner: Boolean = false,
         fqdnIdentityId: String? = null,
+        fqdnIdentitySource: CloudConfigFqdnIdentitySource = CloudConfigFqdnIdentitySource.OwnerId,
+        requireOwnerBinding: Boolean = true,
     ): CloudConfigurationDto {
+        val ownershipUid = ownerId
+            ?: extractOwnerIdFromOwnershipCms(response.context.ownershipRegistry)
+        val signerUid = if (alignOwnerIdWithSigner) {
+            extractUidFromSubject(PlatformCrypto.parseCertificate(signerCertDer).subject)
+        } else {
+            null
+        }
+        val resolvedOwnerId = ownerId ?: signerUid ?: ownershipUid
+        val resolvedFqdnId = resolveFqdnIdentityId(
+            response = response,
+            resolvedOwnerId = resolvedOwnerId,
+            fqdnIdentityId = fqdnIdentityId,
+            fqdnIdentitySource = fqdnIdentitySource,
+        )
         val unsigned = buildUnsignedConfiguration(
             response = response,
             payloadVersion = payloadVersion,
             configurationId = configurationId,
-            ownerId = ownerId,
-            fqdnIdentityId = fqdnIdentityId,
+            ownerId = resolvedOwnerId,
+            fqdnIdentityId = resolvedFqdnId,
+            fqdnIdentitySource = fqdnIdentitySource,
         )
-        val resolvedOwnerId = when {
-            ownerId != null -> ownerId
-            alignOwnerIdWithSigner -> {
-                val uid = extractUidFromSubject(PlatformCrypto.parseCertificate(signerCertDer).subject)
-                uid ?: unsigned.ownerId
-            }
-            else -> unsigned.ownerId
+        if (requireOwnerBinding) {
+            CloudConfigCms.requireOwnerIdBinding(
+                ownerId = resolvedOwnerId,
+                baseDomain = unsigned.baseDomain,
+                signerCertDer = signerCertDer,
+            )
         }
         val pem = CloudConfigCms.resignToPem(
             CloudConfigResignRequest(
@@ -192,7 +218,46 @@ object CloudConfigFromContext {
                 signerKey = signerKey,
             ),
         )
-        return unsigned.copy(ownerId = resolvedOwnerId, cloudConfigPem = pem)
+        return unsigned.copy(cloudConfigPem = pem)
+    }
+
+    /**
+     * Identity-сегмент FQDN: явный [fqdnIdentityId] → иначе [fqdnIdentitySource]
+     * (`owner_id` / `tenant_id` / fallback из двух полей).
+     */
+    fun resolveFqdnIdentityId(
+        response: InvitationContextResponse,
+        resolvedOwnerId: String,
+        fqdnIdentityId: String? = null,
+        fqdnIdentitySource: CloudConfigFqdnIdentitySource = CloudConfigFqdnIdentitySource.OwnerId,
+    ): String {
+        if (!fqdnIdentityId.isNullOrBlank()) return fqdnIdentityId
+        val owner = resolvedOwnerId.trim()
+        val tenant = response.tenantId.trim()
+        return when (fqdnIdentitySource) {
+            CloudConfigFqdnIdentitySource.OwnerId -> {
+                require(owner.isNotEmpty()) { "owner_id is blank; cannot build FQDN from OwnerId" }
+                owner
+            }
+            CloudConfigFqdnIdentitySource.TenantId -> {
+                require(tenant.isNotEmpty()) { "tenant_id is blank; cannot build FQDN from TenantId" }
+                tenant
+            }
+            CloudConfigFqdnIdentitySource.OwnerIdThenTenantId -> {
+                owner.takeIf { it.isNotEmpty() }
+                    ?: tenant.takeIf { it.isNotEmpty() }
+                    ?: throw IllegalArgumentException(
+                        "owner_id and tenant_id are blank; cannot build FQDN",
+                    )
+            }
+            CloudConfigFqdnIdentitySource.TenantIdThenOwnerId -> {
+                tenant.takeIf { it.isNotEmpty() }
+                    ?: owner.takeIf { it.isNotEmpty() }
+                    ?: throw IllegalArgumentException(
+                        "tenant_id and owner_id are blank; cannot build FQDN",
+                    )
+            }
+        }
     }
 
     fun toMobDevResponse(dto: CloudConfigurationDto): MobDevCloudConfigResponse =
@@ -237,8 +302,11 @@ object CloudConfigFromContext {
      * Pretty/compact вход нормализуется в компактный [CloudBrokerConfigPayload]
      * (те же байты, что eContent в CMS).
      *
-     * Если заданы [vin] + [fqdnIdentityId] и alg=1 — перед подписью
-     * `endpoint.baseDomain` пересчитывается по CES §5 (hashB(VIN)-id.suffix).
+     * Если заданы [vin] + identity ([fqdnIdentityId] ?: [ownerId]) и alg=1 — перед подписью
+     * `endpoint.baseDomain` пересчитывается по CES §5 (hashB(VIN)-ownerId.suffix).
+     *
+     * При [requireOwnerBinding]: owner_id (явный / из SAN / из UID subject) должен
+     * совпадать с FQDN и SAN URI `atombus:/user/{owner_id}`.
      *
      * @return Pair(compactJson, cmsPem)
      */
@@ -248,6 +316,8 @@ object CloudConfigFromContext {
         signerKey: SigningKey,
         vin: String? = null,
         fqdnIdentityId: String? = null,
+        ownerId: String? = null,
+        requireOwnerBinding: Boolean = true,
     ): Pair<String, String> {
         require(tboxJson.isNotBlank()) { "tbox JSON is empty" }
         var payload = payloadJson.decodeFromString(
@@ -260,14 +330,16 @@ object CloudConfigFromContext {
         }
         require(payload.cloudBroker.endpoint.baseDomain.isNotBlank()) { "endpoint.baseDomain is blank" }
 
+        val identityForFqdn = fqdnIdentityId?.takeIf { it.isNotBlank() }
+            ?: ownerId?.takeIf { it.isNotBlank() }
         if (
             !vin.isNullOrBlank() &&
-            !fqdnIdentityId.isNullOrBlank() &&
+            !identityForFqdn.isNullOrBlank() &&
             payload.cloudBroker.endpoint.fqdnConstrAlg == CloudBrokerFqdn.ALG_HASH_B_VIN_OWNER
         ) {
             val resolved = CloudBrokerFqdn.resolveBaseDomain(
                 vin = vin,
-                identityId = fqdnIdentityId,
+                identityId = identityForFqdn,
                 domainOrFqdn = payload.cloudBroker.endpoint.baseDomain,
                 fqdnConstrAlg = payload.cloudBroker.endpoint.fqdnConstrAlg,
             )
@@ -275,6 +347,15 @@ object CloudConfigFromContext {
                 cloudBroker = payload.cloudBroker.copy(
                     endpoint = payload.cloudBroker.endpoint.copy(baseDomain = resolved),
                 ),
+            )
+        }
+
+        if (requireOwnerBinding) {
+            val bindingOwnerId = resolveOwnerIdForBinding(ownerId, signerCertDer)
+            CloudConfigCms.requireOwnerIdBinding(
+                ownerId = bindingOwnerId,
+                baseDomain = payload.cloudBroker.endpoint.baseDomain,
+                signerCertDer = signerCertDer,
             )
         }
 
@@ -287,6 +368,31 @@ object CloudConfigFromContext {
             ),
         )
         return compactJson to pem
+    }
+
+    /**
+     * owner_id для binding: явный → SAN `atombus:/user/…` → UID subject.
+     * Если SAN и UID оба есть — должны совпадать.
+     */
+    fun resolveOwnerIdForBinding(explicitOwnerId: String?, signerCertDer: ByteArray): String {
+        if (!explicitOwnerId.isNullOrBlank()) return explicitOwnerId
+        val uris = CloudConfigCms.extractSanUris(signerCertDer)
+        val fromSan = CloudConfigCms.extractOwnerIdFromSanUris(uris)
+        val fromSubject = extractUidFromSubject(
+            PlatformCrypto.parseCertificate(signerCertDer).subject,
+        )
+        if (fromSan != null && fromSubject != null &&
+            !fromSan.equals(fromSubject, ignoreCase = true)
+        ) {
+            throw IllegalArgumentException(
+                "signer UID=$fromSubject differs from SAN URI owner=$fromSan",
+            )
+        }
+        return fromSan
+            ?: fromSubject
+            ?: throw IllegalArgumentException(
+                "owner_id not provided and not found in signer SAN/UID",
+            )
     }
 
     private fun looksLikePemCertificate(pem: String): Boolean {

@@ -7,7 +7,10 @@ import com.atom.sgwregistry.asn1.AttributeDecoder
 import com.atom.sgwregistry.crypto.CertificateCache
 import com.atom.sgwregistry.crypto.PemEncoding
 import com.atom.sgwregistry.crypto.PlatformCrypto
+import com.atom.sgwregistry.crypto.X509EkuParser
+import com.atom.sgwregistry.crypto.X509SanParser
 import com.atom.sgwregistry.internal.bytesToHex
+import com.atom.sgwregistry.model.CloudBrokerConfigPayload
 import com.atom.sgwregistry.model.CloudConfigCmsContainer
 import com.atom.sgwregistry.model.CloudConfigResignOnlyRequest
 import com.atom.sgwregistry.model.CloudConfigResignRequest
@@ -18,6 +21,7 @@ import com.atom.sgwregistry.model.RegistryContainer
 import com.atom.sgwregistry.parser.RegistryParser
 import com.atom.sgwregistry.util.instantToIsoString
 import com.atom.sgwregistry.verifier.SignatureVerifier
+import kotlinx.serialization.json.Json
 
 object CloudConfigCms {
     fun parseMobDevResponse(bytes: ByteArray): MobDevCloudConfigResponse =
@@ -91,6 +95,101 @@ object CloudConfigCms {
             "owner_id ${dto.ownerId} not found in signer subject: ${cert.subject}"
         }
     }
+
+    /** Префикс SAN URI Ownership leaf: `atombus:/user/{owner_id}`. */
+    const val OWNER_SAN_URI_PREFIX = "atombus:/user/"
+
+    /** id-kp-emailProtection — ожидаемый EKU для CMS cloud_config. */
+    const val EKU_EMAIL_PROTECTION = "1.3.6.1.5.5.7.3.4"
+
+    /** id-kp-clientAuth — не подходит для CMS (OpenSSL purpose smime). */
+    const val EKU_CLIENT_AUTH = "1.3.6.1.5.5.7.3.2"
+
+    /** URI из SAN сертификата (OID 2.5.29.17). */
+    fun extractSanUris(certDer: ByteArray): List<String> =
+        X509SanParser.extractUris(certDer)
+
+    /** OID из Extended Key Usage (2.5.29.37). */
+    fun extractEkuOids(certDer: ByteArray): List<String> =
+        X509EkuParser.extractOids(certDer)
+
+    /**
+     * `owner_id` из SAN URI вида `atombus:/user/{uuid}` (первый подходящий).
+     */
+    fun extractOwnerIdFromSanUris(uris: List<String>): String? {
+        for (uri in uris) {
+            val trimmed = uri.trim()
+            if (trimmed.startsWith(OWNER_SAN_URI_PREFIX, ignoreCase = true)) {
+                val id = trimmed.substring(OWNER_SAN_URI_PREFIX.length).trim()
+                if (id.isNotEmpty()) return id
+            }
+        }
+        return null
+    }
+
+    /**
+     * Leaf для CMS должен иметь EKU Email Protection (не TLS Client Auth).
+     */
+    fun requireSignerEkuForCms(signerCertDer: ByteArray) {
+        val ekus = extractEkuOids(signerCertDer)
+        require(ekus.isNotEmpty()) {
+            "signer certificate has no Extended Key Usage; expected Email Protection ($EKU_EMAIL_PROTECTION)"
+        }
+        require(EKU_EMAIL_PROTECTION in ekus) {
+            val hint = if (EKU_CLIENT_AUTH in ekus) {
+                " (got TLS Client Auth $EKU_CLIENT_AUTH — not valid for CMS / OpenSSL smime)"
+            } else {
+                ""
+            }
+            "signer EKU must include Email Protection ($EKU_EMAIL_PROTECTION); got $ekus$hint"
+        }
+    }
+
+    /**
+     * При подписи cloudconfig: один и тот же [ownerId] должен быть
+     * 1) в FQDN `endpoint.baseDomain` (`hashB-ownerId.…`),
+     * 2) в SAN URI сертификата подписанта (`atombus:/user/{ownerId}`),
+     * 3) EKU leaf = Email Protection (если [requireEku]).
+     */
+    fun requireOwnerIdBinding(
+        ownerId: String,
+        baseDomain: String,
+        signerCertDer: ByteArray,
+        requireEku: Boolean = true,
+    ) {
+        require(ownerId.isNotBlank()) { "owner_id is blank" }
+        CloudBrokerFqdn.requireOwnerId(baseDomain, ownerId)
+        val uris = extractSanUris(signerCertDer)
+        require(uris.isNotEmpty()) {
+            "signer certificate has no SAN URI; expected $OWNER_SAN_URI_PREFIX$ownerId"
+        }
+        val expected = "$OWNER_SAN_URI_PREFIX$ownerId"
+        val ok = uris.any { it.equals(expected, ignoreCase = true) }
+        require(ok) {
+            "owner_id=$ownerId not found in signer SAN URI (expected $expected, got $uris)"
+        }
+        if (requireEku) {
+            requireSignerEkuForCms(signerCertDer)
+        }
+    }
+
+    /**
+     * Binding для mob-dev DTO: `owner_id` ↔ FQDN в JSON ↔ SAN URI leaf ↔ EKU.
+     */
+    fun requireOwnerIdBinding(dto: CloudConfigurationDto, requireEku: Boolean = true) {
+        require(dto.ownerId.isNotBlank()) { "owner_id is blank" }
+        val payload = bindingJson.decodeFromString(
+            CloudBrokerConfigPayload.serializer(),
+            dto.cloudConfigJson,
+        )
+        val baseDomain = payload.cloudBroker.endpoint.baseDomain.ifBlank { dto.baseDomain }
+        val container = parsePem(dto.cloudConfigPem)
+        val der = container.signerCertDer
+            ?: throw IllegalStateException("Signer certificate not resolved in cloud_config_pem")
+        requireOwnerIdBinding(dto.ownerId, baseDomain, der, requireEku = requireEku)
+    }
+
+    private val bindingJson = Json { ignoreUnknownKeys = true }
 
     fun resign(request: CloudConfigResignRequest): ByteArray =
         CloudConfigCmsBuilder.resign(request)

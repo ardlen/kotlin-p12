@@ -170,6 +170,9 @@ object CloudConfigTrustExample {
         println("signer issuer:  ${signer.issuer}")
         CloudConfigCms.requireOwnerIdInSigner(dto)
         println("owner_id ↔ signer UID: OK")
+        // CES: owner_id ↔ FQDN (baseDomain) ↔ SAN URI; EKU = Email Protection (не Client Auth)
+        CloudConfigCms.requireOwnerIdBinding(dto)
+        println("owner_id ↔ FQDN ↔ SAN URI ↔ EKU Email Protection: OK")
         return container to signerDer
     }
 

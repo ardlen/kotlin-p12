@@ -3,6 +3,8 @@ package com.atom.sgwregistry
 import com.atom.sgwregistry.cloudconfig.CloudBrokerFqdn
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 class CloudBrokerFqdnTest {
     @Test
@@ -25,16 +27,16 @@ class CloudBrokerFqdnTest {
     }
 
     @Test
-    fun resolveFromRespContextVinAndTenantId() {
-        // resp-context.json: vin + tenant_id + draft base_domain mqtt.atom.auto
+    fun resolveFromRespContextVinAndOwnerId() {
+        // owner_id (UID leaf), не tenant_id
+        val ownerId = "9c1dc2f4-a015-46b7-b88f-a9e30d0a9f86"
         val fqdn = CloudBrokerFqdn.buildFqdn(
             vin = "EAY1F1C56T2000014",
-            identityId = "2281305f-4b16-4a49-989a-9abeeac2df20",
+            identityId = ownerId,
             domainSuffix = "mqtt.atom.auto",
         )
-        assertEquals(
-            "d06e-2281305f-4b16-4a49-989a-9abeeac2df20.mqtt.atom.auto",
-            fqdn,
-        )
+        assertEquals("d06e-$ownerId.mqtt.atom.auto", fqdn)
+        assertTrue(CloudBrokerFqdn.containsOwnerId(fqdn, ownerId))
+        assertFalse(CloudBrokerFqdn.containsOwnerId(fqdn, "2281305f-4b16-4a49-989a-9abeeac2df20"))
     }
 }

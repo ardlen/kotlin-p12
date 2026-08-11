@@ -24,7 +24,7 @@
  *
  * | Индекс | Содержимое |
  * |--------|------------|
- * | `args[0]` | Имя команды: `parse`, `verify`, `analyze`, `build`, `config`, `add-cert`, `remove-cert`, `update-registry`, `cloud-config`, `cloud-config-trust`, `cloud-config-from-context`, `sign-tbox`, `empty-owner`, `empty-owner-unsigned`, `all` |
+ * | `args[0]` | Имя команды: `parse`, `verify`, `analyze`, `build`, `config`, `add-cert`, `remove-cert`, `update-registry`, `cloud-config`, `cloud-config-trust`, `cloud-config-from-context`, `sign-tbox`, `sign-cloud-config`, `gen-ownership-csr`, `ownership-verify`, `ownership-verify-list`, `empty-owner`, `empty-owner-unsigned`, `all` |
  * | `args[1…]` | Позиционные аргументы команды (см. ветки [main] и [printUsage]) |
  *
  * Разрешение путей: [argPath] → [SampleSupport.resolveInputPath] (относительные от [SampleSupport.repoRoot]).
@@ -39,6 +39,7 @@
  */
 package com.atom.sgwregistry.examples
 
+import com.atom.sgwregistry.ownership.OwnershipLedgerJson
 import java.nio.file.Files
 import java.nio.file.Path
 
@@ -284,6 +285,78 @@ fun main(args: Array<String>) {
             )
         }
 
+        // ── sign-cloud-config [good.json] [resp-context.json] [config.json] [outPrefix] [bad.json]
+        // → SignCloudConfigFixtureExample: OK fixture binding + resign + from-context + negative a1
+        "sign-cloud-config" -> {
+            val good = argPath(args, 1, SampleSupport.repoRoot.resolve("cloud-config.json"))
+            val resp = argPath(args, 2, SampleSupport.repoRoot.resolve("resp-context.json"))
+            val config = argPath(args, 3, SampleSupport.defaultConfig())
+            val outPrefix = argPath(
+                args,
+                4,
+                SampleSupport.repoRoot.resolve("kotlin-out/cloud-config-signed-fixture"),
+            )
+            val badDefault = SampleSupport.repoRoot.resolve("a1-cloud-config-signed.json")
+            val bad = when {
+                args.size > 5 -> argPath(args, 5, badDefault)
+                Files.isRegularFile(badDefault) -> badDefault
+                else -> null
+            }
+            Files.createDirectories(outPrefix.parent)
+            SignCloudConfigFixtureExample.run(
+                goodMobDevPath = SampleSupport.requireExists(good, "cloud-config.json / mob-dev"),
+                respContextPath = SampleSupport.requireExists(resp, "resp-context.json"),
+                configPath = SampleSupport.requireExists(config, "config.json"),
+                outputPrefix = outPrefix,
+                badMobDevPath = bad,
+            )
+        }
+
+        // ── gen-ownership-csr [ownerId] [key.pem] [out.csr.pem]
+        // → OwnershipCsr: PKCS#10 + EKU Email Protection + SAN atombus:/user/{ownerId}
+        "gen-ownership-csr" -> {
+            val ownerId = if (args.size > 1) args[1] else "d231b684-82b4-4fdc-83dd-fc9a1861c293"
+            val key = argPath(args, 2, SampleSupport.repoRoot.resolve("certs/signer-key.pem"))
+            val out = argPath(args, 3, SampleSupport.repoRoot.resolve("kotlin-out/ownership.csr.pem"))
+            GenOwnershipCsrExample.run(
+                ownerId = ownerId,
+                ecPrivateKeyPath = key,
+                outputCsrPemPath = out,
+            )
+        }
+
+        // ── ownership-verify [ownership-resp.json] [ownerId] [vin?]
+        // → OwnershipLedgerResponse → verifyLedger(response, ownerId, vin=response.vin)
+        "ownership-verify" -> {
+            val ledger = argPath(args, 1, SampleSupport.repoRoot.resolve("ownership-resp.json"))
+            val ownerId = if (args.size > 2) args[2] else OwnershipVerifyExample.FIXTURE_OWNER_ID
+            // vin optional: если не задан — берётся response.vin из JSON
+            val vin = if (args.size > 3) args[3] else null
+            OwnershipVerifyExample.run(
+                ledgerJsonPath = ledger,
+                ownerId = ownerId,
+                vin = vin,
+            )
+        }
+
+        // ── ownership-verify-list [ownerId] [vin] [cms0.pem] [cms1.pem ...]
+        // → только готовая List<String> CMS PEM (без JSON)
+        "ownership-verify-list" -> {
+            val ownerId = if (args.size > 1) args[1] else OwnershipVerifyExample.FIXTURE_OWNER_ID
+            val vin = if (args.size > 2) args[2] else OwnershipVerifyExample.FIXTURE_VIN
+            val pemArgs = if (args.size > 3) {
+                args.drop(3).map { SampleSupport.resolveInputPath(it) }
+            } else {
+                // defaults: export из ownership-resp.json при отсутствии файлов
+                ensureFixtureOwnershipPemFiles()
+            }
+            OwnershipVerifyExample.runFromPemFiles(
+                pemPaths = pemArgs,
+                ownerId = ownerId,
+                vin = vin,
+            )
+        }
+
         // ── all [file.p12] ────────────────────────────────────────────────────
         // args[1] → .p12 для parse/verify/analyze/update (default: demo-original-container.p12)
         // → runAll: parse → verify → analyze → (если есть config) config → build → verify → update-registry
@@ -336,6 +409,33 @@ private fun runAll(args: Array<String>) {
 private fun argPath(args: Array<String>, index: Int, default: Path): Path =
     if (index < args.size) SampleSupport.resolveInputPath(args[index]) else default
 
+/**
+ * Пишет CMS из `ownership-resp.json` в `kotlin-out/ownership-stmt-*.pem`
+ * (для CLI `ownership-verify-list` без явных путей).
+ */
+private fun ensureFixtureOwnershipPemFiles(): List<Path> {
+    val outDir = SampleSupport.repoRoot.resolve("kotlin-out")
+    Files.createDirectories(outDir)
+    val defaults = listOf(
+        outDir.resolve("ownership-stmt-0.pem"),
+        outDir.resolve("ownership-stmt-1.pem"),
+    )
+    if (defaults.all { Files.isRegularFile(it) }) return defaults
+
+    val ledgerPath = SampleSupport.requireExists(
+        SampleSupport.repoRoot.resolve("ownership-resp.json"),
+        "ownership-resp.json",
+    )
+    val cms = OwnershipLedgerJson.parse(SampleSupport.readBytes(ledgerPath))
+        .context.ownershipRegistry
+    check(cms.isNotEmpty()) { "ownership_registry empty in ownership-resp.json" }
+    return cms.mapIndexed { i, pem ->
+        val p = outDir.resolve("ownership-stmt-$i.pem")
+        Files.writeString(p, pem)
+        p
+    }
+}
+
 private fun printUsage() {
     println(
         """
@@ -372,6 +472,14 @@ private fun printUsage() {
         |                                 invitation → TBOX cloudBroker JSON (+ envelope)
         |  sign-tbox [tbox.json] [config.json] [outPrefix] [vin] [fqdnId] [owner_id]
         |                                 TBOX JSON → cloud_config_pem; FQDN=hashB(vin)-fqdnId.…
+        |  sign-cloud-config [good.json] [resp-context.json] [config.json] [outPrefix] [bad.json]
+        |                                 fixtures: OK binding+resign, from-context, negative a1
+        |  gen-ownership-csr [ownerId] [key.pem] [out.csr.pem]
+        |                                 Ownership PKCS#10 CSR (EKU Email Protection + SAN)
+        |  ownership-verify [ownership-resp.json] [ownerId] [vin?]
+        |                                 OwnershipLedgerResponse → verifyLedger (vin из JSON)
+        |  ownership-verify-list [ownerId] [vin] [cms0.pem] [cms1.pem…]
+        |                                 только готовая List<String> CMS PEM (без JSON)
         |  all    [file.p12]              all of the above
         |
         |Defaults (cwd = repo root via Gradle workingDir):
@@ -379,6 +487,12 @@ private fun printUsage() {
         |  config config.json
         |  export kotlin-out/examples-export
         |  mob-dev JSON / vin / owner_id — из fixture mob-dev-cloud_config.json
+        |  sign-cloud-config → cloud-config.json + resp-context.json → kotlin-out/cloud-config-signed-fixture.*
+        |  gen-ownership-csr → certs/signer-key.pem → kotlin-out/ownership.csr.pem
+        |  ownership-verify → ownership-resp.json
+        |                     ownerId=7f9fc821-a09e-4f96-badc-643daca070c6
+        |                     vin=response.vin (из JSON)
+        |  ownership-verify-list → kotlin-out/ownership-stmt-0.pem + ownership-stmt-1.pem
         |  remove input  kotlin-out/registry-with-added-cert.p12
         |  remove output kotlin-out/registry-after-remove.p12
         """.trimMargin(),

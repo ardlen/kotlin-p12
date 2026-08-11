@@ -6,6 +6,7 @@ import com.atom.sgwregistry.model.CloudConfigResignRequest
 import com.atom.sgwregistry.model.MobDevCloudConfigJson
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
 class CloudConfigCmsTest {
@@ -75,6 +76,73 @@ class CloudConfigCmsTest {
         val dto = loadMobDev().cloudConfiguration
         CloudConfigCms.requireIdentity(dto, "79079999999", "d231b684-82b4-4fdc-83dd-fc9a1861c293")
         assertTrue(CloudConfigCms.matchesIdentity(dto, "79079999999", "d231b684-82b4-4fdc-83dd-fc9a1861c293"))
+        CloudConfigCms.requireOwnerIdInSigner(dto)
+    }
+
+    @Test
+    fun requireOwnerIdBindingMatchesFqdnAndSanUri() {
+        if (!TestFixtures.exists("mob-dev-cloud_config.json")) return
+        val dto = loadMobDev().cloudConfiguration
+        CloudConfigCms.requireOwnerIdBinding(dto)
+        val der = CloudConfigCms.parsePem(dto.cloudConfigPem).signerCertDer!!
+        val uris = CloudConfigCms.extractSanUris(der)
+        assertTrue(uris.any { it == "atombus:/user/d231b684-82b4-4fdc-83dd-fc9a1861c293" })
+        assertEquals(
+            "d231b684-82b4-4fdc-83dd-fc9a1861c293",
+            CloudConfigCms.extractOwnerIdFromSanUris(uris),
+        )
+        assertTrue(CloudConfigCms.EKU_EMAIL_PROTECTION in CloudConfigCms.extractEkuOids(der))
+    }
+
+    @Test
+    fun requireOwnerIdBindingRejectsMismatchedOwner() {
+        if (!TestFixtures.exists("mob-dev-cloud_config.json")) return
+        val dto = loadMobDev().cloudConfiguration
+        val der = CloudConfigCms.parsePem(dto.cloudConfigPem).signerCertDer!!
+        assertFailsWith<IllegalArgumentException> {
+            CloudConfigCms.requireOwnerIdBinding(
+                ownerId = "00000000-0000-0000-0000-000000000000",
+                baseDomain = dto.baseDomain,
+                signerCertDer = der,
+            )
+        }
+    }
+
+    @Test
+    fun fixtureA1RejectsOwnerIdFqdnMismatch() {
+        // Лог-анализ: UID signer / owner_id ≠ UID в baseDomain
+        if (!TestFixtures.exists("a1-cloud-config-signed.json")) return
+        val dto = MobDevCloudConfigJson.parse(
+            TestFixtures.readBytes("a1-cloud-config-signed.json"),
+        ).cloudConfiguration
+        assertFailsWith<IllegalArgumentException> {
+            CloudConfigCms.requireOwnerIdBinding(dto, requireEku = false)
+        }
+    }
+
+    @Test
+    fun fixtureARejectsClientAuthEku() {
+        // Лог-анализ: EKU = TLS Client Auth вместо Email Protection
+        if (!TestFixtures.exists("a-cloud-config-signed.json")) return
+        val dto = MobDevCloudConfigJson.parse(
+            TestFixtures.readBytes("a-cloud-config-signed.json"),
+        ).cloudConfiguration
+        val der = CloudConfigCms.parsePem(dto.cloudConfigPem).signerCertDer!!
+        val ekus = CloudConfigCms.extractEkuOids(der)
+        assertTrue(CloudConfigCms.EKU_CLIENT_AUTH in ekus)
+        assertTrue(CloudConfigCms.EKU_EMAIL_PROTECTION !in ekus)
+        assertFailsWith<IllegalArgumentException> {
+            CloudConfigCms.requireSignerEkuForCms(der)
+        }
+    }
+
+    @Test
+    fun fixtureCloudConfigJsonPassesBindingAndEku() {
+        if (!TestFixtures.exists("cloud-config.json")) return
+        val dto = MobDevCloudConfigJson.parse(
+            TestFixtures.readBytes("cloud-config.json"),
+        ).cloudConfiguration
+        CloudConfigCms.requireOwnerIdBinding(dto)
         CloudConfigCms.requireOwnerIdInSigner(dto)
     }
 

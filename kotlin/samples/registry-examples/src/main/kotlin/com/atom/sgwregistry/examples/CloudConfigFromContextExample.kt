@@ -114,12 +114,15 @@ object CloudConfigFromContextExample {
         println()
 
         // ── 3. Draft → camelCase JSON → CMS (для локальной verify) ────────────
+        // Demo signer без SAN: requireOwnerBinding=false.
+        // Ownership leaf (URI atombus:/user/{owner_id}) — оставляйте true (default).
         val signed = CloudConfigFromContext.buildAndSign(
             response = response,
             signerCertDer = buildCfg.signerCertDer,
             signerKey = buildCfg.signerKey,
             payloadVersion = payloadVersion,
             alignOwnerIdWithSigner = signerUid != null,
+            requireOwnerBinding = CloudConfigCms.extractSanUris(buildCfg.signerCertDer).isNotEmpty(),
         )
 
         println(CloudConfigCms.toText(signed))

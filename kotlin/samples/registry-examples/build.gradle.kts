@@ -16,11 +16,19 @@
  * ./gradlew :samples:registry-examples:runCloud-config
  * ./gradlew :samples:registry-examples:runCloud-config-trust
  * ./gradlew :samples:registry-examples:runCloud-config-from-context
+ * ./gradlew :samples:registry-examples:runSign-cloud-config
+ * ./gradlew :samples:registry-examples:runGen-ownership-csr
+ * ./gradlew :samples:registry-examples:runOwnership-verify
+ * ./gradlew :samples:registry-examples:runOwnership-verify-list
  * ./gradlew :samples:registry-examples:runAll
  * ```
  *
  * workingDir = корень монорепозитория (родитель kotlin/), чтобы относительные пути
  * demo-original-container.p12, config.json, kotlin-out/… резолвились как в README.
+ *
+ * Ownership ledger:
+ * - `runOwnership-verify` — JSON `ownership-resp.json` → List CMS → verify(cms, ownerId, vin)
+ * - `runOwnership-verify-list` — готовый List String CMS PEM из файлов → verify
  */
 plugins {
     kotlin("jvm")
@@ -63,6 +71,10 @@ listOf(
     "parse", "build", "verify", "analyze", "config",
     "add-cert", "remove-cert", "update-registry",
     "cloud-config", "cloud-config-trust", "cloud-config-from-context", "sign-tbox",
+    "sign-cloud-config",
+    "gen-ownership-csr",
+    "ownership-verify",
+    "ownership-verify-list",
     "empty-owner", "empty-owner-unsigned", "all",
 ).forEach { cmd ->
     tasks.register<JavaExec>("run${cmd.replaceFirstChar { it.uppercase() }}") {

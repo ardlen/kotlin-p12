@@ -35,6 +35,35 @@ object SampleSupport {
         println("=== $title ===")
     }
 
+    /** ANSI: зелёный для `true`/`OK`, красный для `false`. Отключается при `NO_COLOR` / не-TTY. */
+    fun colorBool(value: Boolean): String {
+        val text = value.toString()
+        if (!useAnsiColor()) return text
+        val code = if (value) Ansi.GREEN else Ansi.RED
+        return "${code}$text${Ansi.RESET}"
+    }
+
+    fun colorOkLabel(): String =
+        if (useAnsiColor()) "${Ansi.GREEN}OK${Ansi.RESET}" else "OK"
+
+    fun colorFailLabel(): String =
+        if (useAnsiColor()) "${Ansi.RED}FAIL${Ansi.RESET}" else "FAIL"
+
+    private fun useAnsiColor(): Boolean {
+        if (System.getenv("NO_COLOR") != null) return false
+        if (System.getenv("TERM") == "dumb") return false
+        // Gradle JavaExec часто не помечает stdout как TTY — всё равно красим в local CLI.
+        return System.console() != null || System.getenv("FORCE_COLOR") != null ||
+            System.getProperty("sgw.registry.ansi") == "true" ||
+            System.getenv("TERM")?.isNotBlank() == true
+    }
+
+    private object Ansi {
+        const val RESET = "\u001B[0m"
+        const val GREEN = "\u001B[32m"
+        const val RED = "\u001B[31m"
+    }
+
     fun verText(container: RegistryContainer): String? =
         RegistryAnalyzer.parseAuthenticatedAttributes(container.authenticatedAttributesSetBytes)
             .firstOrNull { it.first == "VER" }?.second

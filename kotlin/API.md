@@ -23,10 +23,13 @@
 4. [Cloud configuration](#cloud-config--cloudconfigcms-mob-dev)
    - [`CloudConfigCms`](#cloudconfigcms) · [`CloudConfigFromContext`](#cloudconfigfromcontext) · [`CloudBrokerFqdn`](#cloudbrokerfqdn-ces-vehicle-cloud-configuration-212-5)
    - [Invitation → TBOX + CMS](#invitation-context--tbox--cms)
+   - [Ownership CSR — `OwnershipCsr`](#ownership-csr--ownershipcsr)
+   - [Ownership ledger — `OwnershipRegistryVerifier`](#ownership-ledger--ownershipregistryverifier)
 5. [Типичные сценарии](#типичные-сценарии)
 6. [JVM-примеры (`registry-examples`)](#jvm-примеры-registry-examples)
    - [Быстрый старт](#быстрый-старт) · [Gradle-задачи](#сокращённые-gradle-задачи)
    - [`cloud-config`](#cloud-configuration-cloud-config) · [`trust`](#cloud-config-trust-cloud-config-trust) · [`from-context`](#invitation--tbox-cloud-config-from-context) · [`sign-tbox`](#подпись-tbox-sign-tbox)
+   - [`gen-ownership-csr`](#ownership-csr-gen-ownership-csr) · [`ownership-verify`](#ownership-ledger-ownership-verify) · [`ownership-verify-list`](#ownership-ledger-ownership-verify-list)
 7. [Примеры для мобильных платформ](#примеры-для-мобильных-платформ-android--ios--commonmain)
 8. [Проверка опубликованного пакета](#проверка-опубликованного-пакета-тесты-и-примеры)
 9. [Сводка исключений](#сводка-исключений)
@@ -45,6 +48,8 @@
 | Analyze | Текстовые/JSON отчёты, PEM | commonMain (все) |
 | Update | Добавление/удаление SafeBag с auto-bump VER | commonMain (все) |
 | Cloud config | mob-dev CMS: parse/verify/resign; invitation → TBOX + CES FQDN; sign-tbox | commonMain (все) |
+| Ownership CSR | PKCS#10 CSR (EKU Email Protection + SAN `atombus:/user/{ownerId}`) | commonMain (все) |
+| Ownership ledger | цепочка CMS statements: `verify(cmsList, ownerId, vin)` | commonMain (все) |
 | Config JSON | `config.json` → `BuildConfig` | **JVM:** `ConfigLoader`; **mobile:** `BuildConfigFactory` + `loadPem` |
 | File export | Экспорт PEM на диск | **только JVM** (`RegistryAnalyzerJvm`) для мобильных платфром, хранение данных реестра зависит от мобильной платфромы |
 
@@ -77,6 +82,8 @@ commonMain.dependencies {
 | `RegistryParser`, `RegistryBuilder`, `SignatureVerifier`, `RegistryAnalyzer` | ✓ | ✓ | ✓ | ✓ |
 | `SgwRegistry`, `PemEncoding`, `VerAttribute`, модели (`BuildConfig`, …) | ✓ | ✓ | ✓ | ✓ |
 | `CloudConfigCms`, `CloudConfigFromContext`, `CloudBrokerFqdn` | ✓ | ✓ | ✓ | ✓ |
+| `OwnershipCsr`, `OwnershipCsrRequest` / `Result`, `EcSpkiEncoding` | ✓ | ✓ | ✓ | ✓ |
+| `OwnershipRegistryVerifier`, `OwnershipLedgerJson` | ✓ | ✓ | ✓ | ✓ |
 | `SigningKey`, `PlatformCrypto` (expect/actual) | expect | actual (JCA) | actual (JCA) | actual (SecKey) |
 | `BuildConfigFactory`, `RegistryConfig` | ✓ | ✓ | ✓ | ✓ |
 | `ConfigLoader`, `PemUtils` | — | ✓ | — | — |
@@ -689,10 +696,12 @@ object PemEncoding
 | Метод | Описание |
 |-------|----------|
 | `isPem(data)` | Проверка PEM-заголовка |
-| `detectPemLabel(pem)` | Метка блока (`CERTIFICATE`, `EC PRIVATE KEY`, …) |
+| `detectPemLabel(pem)` | Метка блока (`CERTIFICATE`, `EC PRIVATE KEY`, `CERTIFICATE REQUEST`, …) |
 | `decodePemOrDer(pemOrDer)` | PEM или сырой DER → `ByteArray` |
 | `decodePemBlock(pem, label)` | Извлечь и декодировать PEM-блок |
-| `certToPem(certDer)` | DER → PEM-строка |
+| `certToPem(certDer)` | DER → PEM `CERTIFICATE` |
+| `cmsToPem(cmsDer)` | DER → PEM `CMS` |
+| `csrToPem(csrDer)` | DER → PEM `CERTIFICATE REQUEST` (Ownership CSR) |
 | `decodeSkidHex(hex)` | Hex SKID → bytes |
 | `skidToHex(skid)` | bytes → hex |
 
@@ -825,6 +834,8 @@ object SgwRegistry :
 | `verifyCloudConfiguration(dto)` | JSON + CMS end-to-end |
 | `requireCloudConfigIdentity(dto, vin, ownerId)` | vin / owner_id |
 | `requireCloudConfigOwnerIdInSigner(dto)` | owner_id в UID subject |
+| `requireCloudConfigOwnerIdBinding(dto, requireEku=true)` | owner_id ↔ FQDN ↔ SAN URI ↔ EKU Email Protection |
+| `requireCloudConfigSignerEku(certDer)` | EKU = Email Protection (не TLS Client Auth) |
 | `resignCloudConfigPem(request)` | Переподпись → PEM (eContent из JSON) |
 | `resignCloudConfigOnly(container, request)` | Переподпись без пересборки eContent |
 | `resignCloudConfiguration(dto, cert, key)` | DTO + новый PEM из JSON |
@@ -832,6 +843,15 @@ object SgwRegistry :
 | `cloudConfigToText(dto)` | Отчёт для лога/UI |
 | `parseInvitationContext(bytes\|text)` | `resp-context.json` → `InvitationContextResponse` |
 | `buildCloudConfigurationFromContext(...)` | invitation → signed DTO (CES FQDN + CMS) |
+| `buildOwnershipCsr(request, key, publicKeySpki)` | PKCS#10 Ownership CSR → `OwnershipCsrResult` |
+| `buildOwnershipCsrFromEcPrivateKeyPem(request, pemOrDer)` | CSR из SEC1/PKCS#8 EC key (нужен `publicKey [1]`) |
+| `verifyOwnershipRegistry(cmsList, ownerId, vin)` | Цепочка ownership statements → `Boolean` |
+| `tryVerifyOwnershipRegistry(cmsList, ownerId, vin)` | То же → `OwnershipVerifyResult` |
+| `verifyOwnershipLedger(response, ownerId, vin?)` | `OwnershipLedgerResponse` → verify (`vin` default = `response.vin`) |
+| `tryVerifyOwnershipLedger(response, ownerId, vin?)` | То же → `OwnershipVerifyResult` |
+| `parseOwnershipLedger(bytes\|text)` | `ownership-resp.json` → `OwnershipLedgerResponse` |
+
+Подробнее: [Ownership CSR — `OwnershipCsr`](#ownership-csr--ownershipcsr), [Ownership ledger — `OwnershipRegistryVerifier`](#ownership-ledger--ownershipregistryverifier).
 
 ---
 
@@ -896,6 +916,9 @@ object CloudConfigCms
 | `verifyCloudConfiguration(dto)` | json match + CMS verify |
 | `requireIdentity(dto, vin, ownerId)` | vin / owner_id == ожидаемые |
 | `requireOwnerIdInSigner(dto)` | owner_id в UID subject подписанта |
+| `requireOwnerIdBinding(dto\|ownerId, baseDomain, certDer)` | owner_id в FQDN + SAN `atombus:/user/{id}` + EKU Email Protection |
+| `requireSignerEkuForCms(certDer)` | EKU must include `1.3.6.1.5.5.7.3.4` (не Client Auth) |
+| `extractSanUris` / `extractEkuOids` | SAN URI / EKU OID из leaf DER |
 | `resign(request)` | Новый CMS DER |
 | `resignToPem(request)` | Новый PEM (`-----BEGIN CMS-----`) — **пересборка eContent из JSON** |
 | `resignConfiguration(dto, cert, key)` | DTO с новым `cloud_config_pem` (из JSON) |
@@ -944,12 +967,16 @@ object CloudConfigFromContext
 | `extractOwnerIdFromOwnershipCms(pem)` | UID leaf из `ownership_registry` |
 | `extractUidFromSubject(subject)` | UID=… из DN string |
 | `buildCloudConfigJson(draft, payloadVersion?, vin?, fqdnIdentityId?)` | snake_case → compact camelCase; при alg=1 — CES FQDN |
-| `buildUnsignedConfiguration(response, …, fqdnIdentityId?)` | DTO без `cloud_config_pem` |
-| `buildAndSign(response, cert, key, payloadVersion?, fqdnIdentityId?, …)` | payload + CMS (`resignToPem`) |
+| `buildUnsignedConfiguration(response, …, fqdnIdentityId?, fqdnIdentitySource?)` | DTO без `cloud_config_pem` |
+| `buildAndSign(…, fqdnIdentitySource?, requireOwnerBinding?)` | payload + CMS; FQDN из `owner_id` / `tenant_id` |
+| `resolveFqdnIdentityId(…, fqdnIdentitySource?)` | выбор id для сегмента FQDN |
 | `encodeTboxPayload(dto, pretty?)` | только `{ "v", "cloudBroker" }` для TBOX |
 | `encodeMobDevResponse(dto)` | `{ "cloud_configuration": … }` |
-| `signTboxPayload(json, cert, key, vin?, fqdnIdentityId?)` | TBOX JSON → compact eContent + CMS PEM |
+| `signTboxPayload(json, cert, key, vin?, fqdnIdentityId?, ownerId?)` | TBOX JSON → compact eContent + CMS PEM |
 | `toMobDevResponse(dto)` | обёртка `MobDevCloudConfigResponse` |
+
+**`CloudConfigFqdnIdentitySource`:** `OwnerId` (default) · `TenantId` · `OwnerIdThenTenantId` · `TenantIdThenOwnerId`.  
+Явный `fqdnIdentityId` перекрывает source. При `TenantId` и `requireOwnerBinding=true` tenant должен совпадать с `owner_id` в FQDN/SAN.
 
 **Выход TBOX (payload):**
 
@@ -1110,6 +1137,8 @@ val (compact, pem) = CloudConfigFromContext.signTboxPayload(
 Через фасад:
 
 ```kotlin
+import com.atom.sgwregistry.csr.OwnershipCsrRequest
+
 SgwRegistry.parseMobDevCloudConfig(jsonBytes)
 SgwRegistry.verifyCloudConfiguration(dto)
 SgwRegistry.cloudConfigToText(dto)
@@ -1121,16 +1150,177 @@ SgwRegistry.buildCloudConfigurationFromContext(
     payloadVersion = 5,
     fqdnIdentityId = invitation.tenantId, // optional; default = tenant_id / ownership UID
 )
+SgwRegistry.buildOwnershipCsrFromEcPrivateKeyPem(
+    OwnershipCsrRequest(ownerId = "d231b684-…"),
+    ecPrivateKeyPem,
+)
 ```
 
 ### Cloud config на iOS / Android
 
 - Parse/verify/resign — через `CloudConfigCms` (commonMain).
 - Invitation → TBOX / CES FQDN — `CloudConfigFromContext` + `CloudBrokerFqdn` (commonMain).
+- Ownership CSR — `OwnershipCsr` (commonMain); на Android/iOS удобнее `build(request, key, publicKeySpki)` с ключом из Keystore/Keychain и SPKI из enrollment.
 - `signerKey` — из Keystore (Android) или Keychain (iOS); **не** использовать raw 64-byte P1363 подпись.
 - JSON и PEM — из API/backend как `ByteArray` / `String`.
 
-Unit-тесты: `CloudConfigCmsTest`, `CloudConfigFromContextTest`, `CloudBrokerFqdnTest` (fixtures `mob-dev-cloud_config.json`, `resp-context.json`).
+Unit-тесты: `CloudConfigCmsTest`, `CloudConfigFromContextTest`, `CloudBrokerFqdnTest`, `OwnershipCsrTest`.
+
+| Fixture (корень репо) | Назначение |
+|-----------------------|------------|
+| `mob-dev-cloud_config.json` | OK: owner_id = FQDN = SAN, EKU Email Protection |
+| `cloud-config.json` | OK (тот же контракт) |
+| `resp-context.json` | invitation → `buildAndSign` / CES FQDN |
+| `a1-cloud-config-signed.json` | FAIL: owner_id/UID ≠ UID в `baseDomain` |
+| `a-cloud-config-signed.json` | FAIL: EKU = TLS Client Auth (+ mismatch FQDN) |
+
+Перед подписью (`buildAndSign` / `signTboxPayload`, `requireOwnerBinding=true`) библиотека отклоняет mismatch owner_id ↔ FQDN ↔ SAN и неверный EKU.
+
+### Ownership CSR — `OwnershipCsr`
+
+Пакет: `com.atom.sgwregistry.csr`  
+Платформы: **commonMain** (JVM / Android / iOS). ASN.1 — `AsnWriter`, подпись — `PlatformCrypto` (**без BouncyCastle**).
+
+PKCS#10 CSR для выдачи Ownership leaf в Cloud PKI. Запрашивает расширения, нужные для последующей подписи CMS `cloud_config_pem` и проверки `requireOwnerIdBinding`.
+
+#### Что попадает в CSR
+
+| Поле | Значение по умолчанию |
+|------|------------------------|
+| Subject | `O=ATOM`, `OU=Customers`, `OU=EnhancedAuth`, `UID={ownerId}` (PrintableString) |
+| KeyUsage | `digitalSignature` (critical) |
+| EKU | **Email Protection** `1.3.6.1.5.5.7.3.4` (`clientAuth` выкл.) |
+| SAN | `URI:atombus:/user/{ownerId}` |
+| Signature | ECDSA-SHA256 (P-256), parameters ABSENT |
+
+> CA может **игнорировать** запрошенный EKU/SAN. После enroll всегда проверяйте leaf: `requireSignerEkuForCms` / `requireOwnerIdBinding`.
+
+#### API
+
+```kotlin
+object OwnershipCsr {
+    fun buildFromEcPrivateKeyPem(request: OwnershipCsrRequest, ecPrivateKeyPemOrDer: ByteArray): OwnershipCsrResult
+    fun build(request: OwnershipCsrRequest, key: SigningKey, publicKeySpki: ByteArray): OwnershipCsrResult
+    fun buildToPem(request: OwnershipCsrRequest, ecPrivateKeyPemOrDer: ByteArray): String
+}
+```
+
+| Тип | Поля |
+|-----|------|
+| `OwnershipCsrRequest` | `ownerId`, `organization`=`ATOM`, `organizationalUnits`=`[Customers, EnhancedAuth]`, `includeEmailProtectionEku`=`true`, `includeClientAuthEku`=`false`, `includeKeyUsageDigitalSignature`=`true` |
+| `OwnershipCsrResult` | `csrDer`, `csrPem` (`BEGIN CERTIFICATE REQUEST`), `publicKeySpki`, `ownerId`, `sanUri` |
+
+Вспомогательно: `EcSpkiEncoding.spkiFromEcPrivateKeyPemOrDer` — SPKI из SEC1/PKCS#8.  
+SEC1 `EC PRIVATE KEY` **должен** содержать `publicKey [1]` (как у OpenSSL с именованной кривой).
+
+#### Пример
+
+```kotlin
+import com.atom.sgwregistry.csr.OwnershipCsr
+import com.atom.sgwregistry.csr.OwnershipCsrRequest
+import com.atom.sgwregistry.cloudconfig.CloudConfigCms
+
+val csr = OwnershipCsr.buildFromEcPrivateKeyPem(
+    OwnershipCsrRequest(ownerId = "d231b684-82b4-4fdc-83dd-fc9a1861c293"),
+    ecPrivateKeyPem,
+)
+// csr.csrPem → Cloud PKI → Ownership leaf
+// После выдачи:
+CloudConfigCms.requireSignerEkuForCms(leafCertDer)
+// CloudConfigCms.requireOwnerIdBinding(dto)
+
+// через фасад:
+SgwRegistry.buildOwnershipCsrFromEcPrivateKeyPem(
+    OwnershipCsrRequest(ownerId = "…"),
+    ecPrivateKeyPem,
+)
+```
+
+Проверка артефакта:
+
+```bash
+openssl req -in ownership.csr.pem -noout -text -verify
+# expect: E-mail Protection + URI:atombus:/user/{ownerId}
+```
+
+JVM CLI: [`gen-ownership-csr`](#ownership-csr-gen-ownership-csr).  
+Тест: `OwnershipCsrTest`.
+
+### Ownership ledger — `OwnershipRegistryVerifier`
+
+Пакет: `com.atom.sgwregistry.ownership`  
+Формат: `context.ownership_registry` = **массив** standalone CMS (fixture `ownership-resp.json`), не один PFX.
+
+Каждый элемент — PEM `-----BEGIN CMS-----` … SignedData; eContent = JSON statement:
+
+```json
+{"VIN":"AAABBBCCC3","owner_dn":"UID=…,OU=EnhancedAuth+OU=Customers,O=ATOM","v":1,"p_hash":""}
+```
+
+#### Сигнатура API (все аргументы явно)
+
+```kotlin
+fun verify(
+    ownershipRegistryCms: List<String>, // #1 упорядоченный список CMS PEM
+    ownerId: String,                    // #2 UID текущего владельца (последний owner_dn)
+    vin: String,                        // #3 VIN автомобиля (единый для цепочки)
+): Boolean
+
+fun tryVerify(...): OwnershipVerifyResult
+```
+
+Фасад: `SgwRegistry.verifyOwnershipRegistry(cmsList, ownerId, vin)`.
+
+#### Что проверяется
+
+1. Подпись каждого CMS (embedded leaf).
+2. `p_hash`: genesis пустой; далее hex(подписи предыдущего CMS).
+3. Один `VIN` во всех statements == аргумент `vin`.
+4. UID из `owner_dn` **последнего** statement == аргумент `ownerId`.
+
+#### Пример A — структура `ownership-resp.json` → `OwnershipLedgerResponse`
+
+```kotlin
+val ledger = OwnershipLedgerJson.parse(ownershipRespBytes)
+// или: SgwRegistry.parseOwnershipLedger(bytes)
+
+// vin по умолчанию = ledger.vin (поле верхнего уровня JSON)
+val ok = OwnershipRegistryVerifier.verifyLedger(
+    response = ledger,
+    ownerId = "7f9fc821-a09e-4f96-badc-643daca070c6",
+)
+// фасад:
+SgwRegistry.verifyOwnershipLedger(ledger, ownerId)
+```
+
+#### Пример B — только готовый `List<String>` CMS PEM
+
+Когда массив уже есть (API/БД/файлы) — **без** парсинга invitation JSON:
+
+```kotlin
+val ownershipRegistryCms: List<String> = listOf(cmsPem0, cmsPem1)
+
+val ok = OwnershipRegistryVerifier.verify(
+    ownershipRegistryCms = ownershipRegistryCms,
+    ownerId = "7f9fc821-a09e-4f96-badc-643daca070c6",
+    vin = "AAABBBCCC3",
+)
+
+// фасад:
+SgwRegistry.verifyOwnershipRegistry(
+    ownershipRegistryCms = ownershipRegistryCms,
+    ownerId = "7f9fc821-a09e-4f96-badc-643daca070c6",
+    vin = "AAABBBCCC3",
+)
+
+// с диагностикой:
+val result = OwnershipRegistryVerifier.tryVerify(ownershipRegistryCms, ownerId, vin)
+// result.ok / result.reason / result.ownerId / result.vin
+```
+
+Модели: `OwnershipStatement`, `OwnershipVerifyResult`, `OwnershipLedgerResponse`.  
+CLI: [`ownership-verify`](#ownership-ledger-ownership-verify), [`ownership-verify-list`](#ownership-ledger-ownership-verify-list).  
+Тест: `OwnershipRegistryVerifierTest`. Исходник примеров: `OwnershipVerifyExample.kt`.
 
 ---
 
@@ -1203,12 +1393,21 @@ val updated = RegistryBuilder.removeCertificateBySkidAndResign(
 
 Ответ облачного сервиса mob-dev содержит `cloud_config_json` (UTF-8 JSON) и `cloud_config_pem` (standalone CMS SignedData, не PFX).  
 Invitation (`resp-context.json`) → camelCase TBOX + CES FQDN — через `CloudConfigFromContext` / `CloudBrokerFqdn`.  
-Подробнее — раздел [CloudConfigCms](#cloud-config--cloudconfigcms-mob-dev) и примеры `cloud-config*` / `sign-tbox` в `samples/registry-examples`.
+Ownership leaf: сначала [`OwnershipCsr`](#ownership-csr--ownershipcsr) → Cloud PKI → затем подпись CMS и `requireOwnerIdBinding`.  
+Подробнее — раздел [CloudConfigCms](#cloud-config--cloudconfigcms-mob-dev) и примеры `cloud-config*` / `sign-tbox` / `gen-ownership-csr` в `samples/registry-examples`.
 
 ```kotlin
 import com.atom.sgwregistry.cloudconfig.CloudConfigCms
+import com.atom.sgwregistry.csr.OwnershipCsr
+import com.atom.sgwregistry.csr.OwnershipCsrRequest
 import com.atom.sgwregistry.model.CloudConfigResignRequest
 import com.atom.sgwregistry.model.MobDevCloudConfigJson
+
+// 0) CSR для Ownership leaf (до enroll)
+val csrPem = OwnershipCsr.buildToPem(
+    OwnershipCsrRequest(ownerId = "d231b684-82b4-4fdc-83dd-fc9a1861c293"),
+    ecPrivateKeyPem,
+)
 
 val dto = MobDevCloudConfigJson.parse(jsonBytes).cloudConfiguration
 println(CloudConfigCms.toText(dto))
@@ -1261,7 +1460,11 @@ cd kotlin
 ./gradlew :samples:registry-examples:runCloud-config-trust  # identity → PKIX → CMS
 ./gradlew :samples:registry-examples:runCloud-config-from-context  # invitation → TBOX
 ./gradlew :samples:registry-examples:runSign-tbox           # TBOX → cloud_config_pem
-./gradlew :samples:registry-examples:runEmpty-owner         # пустой owner.p12
+./gradlew :samples:registry-examples:runSign-cloud-config   # fixtures → sign + binding
+./gradlew :samples:registry-examples:runGen-ownership-csr   # PKCS#10 Ownership CSR (EKU/SAN)
+./gradlew :samples:registry-examples:runOwnership-verify      # JSON → List CMS → verify
+./gradlew :samples:registry-examples:runOwnership-verify-list # готовая List<String> CMS PEM
+./gradlew :samples:registry-examples:runEmpty-owner           # пустой owner.p12
 ```
 
 ### Сокращённые Gradle-задачи
@@ -1282,6 +1485,10 @@ cd kotlin
 | `runCloud-config-trust` | `cloud-config-trust [mob.json] [vin] [owner_id] [ownership-ca.pem]` | identity → PKIX → CMS |
 | `runCloud-config-from-context` | `cloud-config-from-context [resp.json] [cfg] [v] [out]` | invitation → TBOX JSON |
 | `runSign-tbox` | `sign-tbox [tbox.json] [cfg] [outPrefix] [vin] [fqdnId] [owner_id]` | TBOX → CMS PEM |
+| `runSign-cloud-config` | `sign-cloud-config [good.json] [resp-context.json] [cfg] [outPrefix] [bad.json]` | фикстуры: binding + resign + from-context + negative a1 |
+| `runGen-ownership-csr` | `gen-ownership-csr [ownerId] [key.pem] [out.csr.pem]` | Ownership PKCS#10 (EKU Email Protection + SAN) |
+| `runOwnership-verify` | `ownership-verify [ownership-resp.json] [ownerId] [vin]` | JSON → List CMS → verify(cms, ownerId, vin) |
+| `runOwnership-verify-list` | `ownership-verify-list [ownerId] [vin] [cms0.pem…]` | готовая `List<String>` CMS PEM → verify |
 | `runAll` | `all [file.p12]` | все .p12 (**без** cloud-config) |
 
 С сокращённой задачей (`runCloud-config`, `runCloud-config-trust`, …) в `--args` можно передать **только пути** — имя команды подставится автоматически:
@@ -1415,6 +1622,91 @@ Pretty TBOX нормализуется в compact eContent перед подпи
 
 Исходник: `SignTboxCloudConfigExample.kt`.
 
+### Ownership CSR (`gen-ownership-csr`)
+
+PKCS#10 Ownership CSR (EKU Email Protection + SAN) из EC private key.
+
+```bash
+./gradlew :samples:registry-examples:runGen-ownership-csr
+
+# ownerId + key + out
+./gradlew :samples:registry-examples:run --args="gen-ownership-csr \
+  d231b684-82b4-4fdc-83dd-fc9a1861c293 \
+  certs/signer-key.pem \
+  kotlin-out/ownership.csr.pem"
+```
+
+| Аргумент | По умолчанию |
+|----------|--------------|
+| ownerId | `d231b684-82b4-4fdc-83dd-fc9a1861c293` |
+| key.pem | `certs/signer-key.pem` (SEC1 с `publicKey [1]`) |
+| out.csr.pem | `kotlin-out/ownership.csr.pem` (+ рядом `.der`) |
+
+```bash
+openssl req -in kotlin-out/ownership.csr.pem -noout -text -verify
+# verify OK; E-mail Protection; URI:atombus:/user/{ownerId}
+```
+
+API: [`OwnershipCsr`](#ownership-csr--ownershipcsr). Исходник: `GenOwnershipCsrExample.kt`.
+
+### Ownership ledger (`ownership-verify`)
+
+Сценарий A: структура `ownership-resp.json` → `OwnershipLedgerResponse` → `verifyLedger`.
+
+```bash
+./gradlew :samples:registry-examples:runOwnership-verify
+
+./gradlew :samples:registry-examples:run --args="ownership-verify \
+  ownership-resp.json \
+  7f9fc821-a09e-4f96-badc-643daca070c6"
+```
+
+| Аргумент | По умолчанию |
+|----------|--------------|
+| JSON | `ownership-resp.json` (envelope invitation) |
+| ownerId | `7f9fc821-a09e-4f96-badc-643daca070c6` (UID последнего `owner_dn`) |
+| vin | `response.vin` из JSON (опциональный override 3-м аргументом) |
+
+Исходник: `OwnershipVerifyExample.run` / `runFromLedger`. API: [`OwnershipRegistryVerifier`](#ownership-ledger--ownershipregistryverifier).
+
+### Ownership ledger list (`ownership-verify-list`)
+
+Сценарий B: готовая структура `List<String>` CMS PEM → `verify(cms, ownerId, vin)` (без парсинга JSON).
+
+```bash
+./gradlew :samples:registry-examples:runOwnership-verify-list
+
+# свои PEM (порядок = порядок statements, genesis первым):
+./gradlew :samples:registry-examples:run --args="ownership-verify-list \
+  7f9fc821-a09e-4f96-badc-643daca070c6 \
+  AAABBBCCC3 \
+  kotlin-out/ownership-stmt-0.pem \
+  kotlin-out/ownership-stmt-1.pem"
+```
+
+| Аргумент | По умолчанию |
+|----------|--------------|
+| ownerId | `7f9fc821-a09e-4f96-badc-643daca070c6` |
+| vin | `AAABBBCCC3` |
+| cms*.pem | `kotlin-out/ownership-stmt-0.pem` … (создаются из `ownership-resp.json` при отсутствии) |
+
+Эквивалент в коде:
+
+```kotlin
+val ownershipRegistryCms: List<String> = listOf(
+    Files.readString(Path.of("kotlin-out/ownership-stmt-0.pem")),
+    Files.readString(Path.of("kotlin-out/ownership-stmt-1.pem")),
+)
+OwnershipRegistryVerifier.verify(
+    ownershipRegistryCms = ownershipRegistryCms,
+    ownerId = "7f9fc821-a09e-4f96-badc-643daca070c6",
+    vin = "AAABBBCCC3",
+)
+// или: SgwRegistry.verifyOwnershipRegistry(ownershipRegistryCms, ownerId, vin)
+```
+
+Исходник: `OwnershipVerifyExample.runFromCmsList` / `runFromPemFiles`.
+
 ### Empty owner.p12 (`empty-owner` / `empty-owner-unsigned`)
 
 ```bash
@@ -1441,7 +1733,8 @@ Pretty TBOX нормализуется в compact eContent перед подпи
 | Файл | Назначение |
 |------|------------|
 | `demo-original-container.p12` | .p12 примеры |
-| `config.json`, `certs/` | build, add/remove, resign, sign-tbox |
+| `config.json`, `certs/` | build, add/remove, resign, sign-tbox, gen-ownership-csr |
+| `certs/signer-key.pem` | EC key для demo CSR / resign (должен содержать publicKey) |
 | `mob-dev-cloud_config.json` | исходный cloud-config (owner-leaf) |
 | `resp-context.json` | invitation → TBOX |
 | `owner-empty-config.json` | empty-owner |
@@ -1449,6 +1742,9 @@ Pretty TBOX нормализуется в compact eContent перед подпи
 | `certs/ATOM ROOT ext CA.pem` | extra trust anchor для PKIX CMS |
 | `kotlin-out/cloud-config-tbox.json` | TBOX payload |
 | `kotlin-out/cloud-config-tbox-signed.pem` | CMS PEM после sign-tbox |
+| `ownership-resp.json` | fixture ownership ledger (`ownership_registry[]` CMS) |
+| `kotlin-out/ownership.csr.pem` | Ownership CSR после `gen-ownership-csr` |
+| `kotlin-out/ownership-stmt-*.pem` | CMS statements после `ownership-verify` / для `ownership-verify-list` |
 | `kotlin-out/mob-dev-cloud_config-resigned.json` | результат `cloud-config` + resign (test signer) |
 
 ### Тесты (JVM / iOS / Android)
@@ -1670,17 +1966,26 @@ val hash = PlatformCrypto.sha256(data)
 
 ### Android — Cloud PKI + Keystore
 
-Сценарий: ключ в **Android Keystore** → CSR → Cloud PKI → сертификат; **тот же** ключ подписывает `.p12`.  
-Сертификат от PKI передаётся **и** как `signerCertDer`, **и** в `SafeBag` (например роль `owner`).
+Сценарий: ключ в **Android Keystore** → [`OwnershipCsr.build`](#ownership-csr--ownershipcsr) (EKU Email Protection + SAN) → Cloud PKI → сертификат; **тот же** ключ подписывает `.p12` и `cloud_config_pem`.  
+Сертификат от PKI передаётся **и** как `signerCertDer`, **и** в `SafeBag` (например роль `owner`). После enroll — `requireSignerEkuForCms` / `requireOwnerIdBinding`.
 
 Пакет: `com.atom.sgwregistry.crypto` (только **androidMain** / Android-артефакт):
 
 ```kotlin
 import com.atom.sgwregistry.crypto.signingKeyFromAndroidKeyStore
 import com.atom.sgwregistry.crypto.signingKeyFromPrivateKey
+import com.atom.sgwregistry.csr.OwnershipCsr
+import com.atom.sgwregistry.csr.OwnershipCsrRequest
 
 val signerKey = signingKeyFromAndroidKeyStore(keystoreAlias) // тот же alias, что для CSR
 // или: signingKeyFromPrivateKey(keyStore.getKey(alias, null) as PrivateKey)
+
+// CSR: нужен SPKI публичного ключа из Keystore (X.509 SubjectPublicKeyInfo DER)
+val csr = OwnershipCsr.build(
+    OwnershipCsrRequest(ownerId = ownerId),
+    key = signerKey,
+    publicKeySpki = publicKeySpkiDer,
+)
 
 val pkiCertDer: ByteArray = ... // ответ PKI (DER или PemEncoding.decodePemOrDer)
 

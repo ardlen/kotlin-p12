@@ -114,12 +114,16 @@ object SignTboxCloudConfigExample {
         //   b) при vin+fqdnIdentityId и alg=1 — CES FQDN в endpoint.baseDomain
         //   c) encode compact → eContent
         //   d) CloudConfigCms.resignToPem → BEGIN CMS
+        // Demo signer.pem без SAN — binding выкл.; Ownership leaf с atombus:/user/{id} → вкл.
+        val requireBinding = CloudConfigCms.extractSanUris(buildCfg.signerCertDer).isNotEmpty()
         val (compactJson, cmsPem) = CloudConfigFromContext.signTboxPayload(
             tboxJson = tboxText,
             signerCertDer = buildCfg.signerCertDer,
             signerKey = buildCfg.signerKey,
             vin = vin.takeIf { it.isNotBlank() },
             fqdnIdentityId = fqdnIdentityId.takeIf { it.isNotBlank() },
+            ownerId = ownerId.takeIf { it.isNotBlank() },
+            requireOwnerBinding = requireBinding,
         )
         println("endpoint.baseDomain (after CES resolve): see compact JSON / envelope")
         println()
