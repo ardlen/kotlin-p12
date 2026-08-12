@@ -10,7 +10,7 @@ dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.PREFER_SETTINGS)
     repositories {
  // Только kotlin/dist/maven — примеры и потребители тестируют опубликованный dist,
- // multiplatform публикация Maven в dist/maven/com.atom:sgw-registry:2.5.0.
+ // multiplatform публикация Maven в dist/maven/com.atom:sgw-registry:2.6.0.
         maven { url = uri("${rootDir}/dist/maven") }
         google()
         mavenCentral()
