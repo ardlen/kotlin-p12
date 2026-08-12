@@ -918,7 +918,7 @@ val csr = OwnershipCsr.buildFromEcPrivateKeyPem(
 // После выдачи leaf: CloudConfigCms.requireSignerEkuForCms / requireOwnerIdBinding
 ```
 
-> CA может проигнорировать запрошенный EKU. После enroll всегда валидируйте leaf.
+> CA для отладки  может проигнорировать запрошенный EKU. После enroll всегда валидируйте leaf.
 
 JVM CLI:
 
@@ -1027,10 +1027,29 @@ JVM CLI (подробнее — [Запуск примеров](#запуск-п
 | JSON == eContent + CMS | `verifyCloudConfiguration` | `verifyCloudConfiguration` |
 | vin / owner_id | `matchesIdentity` / `requireIdentity` | `requireCloudConfigIdentity` |
 | owner_id ↔ UID leaf | `requireOwnerIdInSigner` | `requireCloudConfigOwnerIdInSigner` |
-| owner_id ↔ FQDN ↔ SAN ↔ EKU | `requireOwnerIdBinding` / `requireSignerEkuForCms` | `requireCloudConfigOwnerIdBinding` / `requireCloudConfigSignerEku` |
+| owner_id ↔ FQDN ↔ SAN ↔ EKU | `requireOwnerIdBinding(..., requireEku=true)` / `requireSignerEkuForCms` | `requireCloudConfigOwnerIdBinding` / `requireCloudConfigSignerEku` |
 | Resign (eContent из JSON) | `resignToPem` / `resignConfiguration` | `resignCloudConfigPem` |
 | Resign (eContent как в CMS) | `resignOnlyToPem` / `resignConfigurationOnly` | `resignCloudConfigOnly` / `resignCloudConfigurationOnly` |
 | Отчёт | `toText` | `cloudConfigToText` |
+
+#### Как игнорировать EKU
+
+**Проверка подписи CMS (`verify` / `verifyCloudConfiguration`) EKU не проверяет.**  
+EKU — только в `requireOwnerIdBinding` / `requireSignerEkuForCms`.
+
+```kotlin
+// только подпись + JSON == eContent
+CloudConfigCms.verifyCloudConfiguration(dto)
+
+// FQDN + SAN, без EKU (demo-signer / Client Auth leaf)
+CloudConfigCms.requireOwnerIdBinding(dto, requireEku = false)
+SgwRegistry.requireCloudConfigOwnerIdBinding(dto, requireEku = false)
+
+// полный CES-контракт (default)
+CloudConfigCms.requireOwnerIdBinding(dto) // requireEku = true
+```
+
+По умолчанию `requireEku = true`. В production для cloud_config обычно оставляют включённым.
 
 `CloudConfigFromContext` / фасад:
 

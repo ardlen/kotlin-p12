@@ -834,8 +834,8 @@ object SgwRegistry :
 | `verifyCloudConfiguration(dto)` | JSON + CMS end-to-end |
 | `requireCloudConfigIdentity(dto, vin, ownerId)` | vin / owner_id |
 | `requireCloudConfigOwnerIdInSigner(dto)` | owner_id в UID subject |
-| `requireCloudConfigOwnerIdBinding(dto, requireEku=true)` | owner_id ↔ FQDN ↔ SAN URI ↔ EKU Email Protection |
-| `requireCloudConfigSignerEku(certDer)` | EKU = Email Protection (не TLS Client Auth) |
+| `requireCloudConfigOwnerIdBinding(dto, requireEku=true)` | owner_id ↔ FQDN ↔ SAN URI; при `requireEku=true` (default) — ещё EKU Email Protection |
+| `requireCloudConfigSignerEku(certDer)` | EKU = Email Protection (не TLS Client Auth); вызывать явно, если нужен только EKU |
 | `resignCloudConfigPem(request)` | Переподпись → PEM (eContent из JSON) |
 | `resignCloudConfigOnly(container, request)` | Переподпись без пересборки eContent |
 | `resignCloudConfiguration(dto, cert, key)` | DTO + новый PEM из JSON |
@@ -916,7 +916,7 @@ object CloudConfigCms
 | `verifyCloudConfiguration(dto)` | json match + CMS verify |
 | `requireIdentity(dto, vin, ownerId)` | vin / owner_id == ожидаемые |
 | `requireOwnerIdInSigner(dto)` | owner_id в UID subject подписанта |
-| `requireOwnerIdBinding(dto\|ownerId, baseDomain, certDer)` | owner_id в FQDN + SAN `atombus:/user/{id}` + EKU Email Protection |
+| `requireOwnerIdBinding(dto\|ownerId, baseDomain, certDer, requireEku=true)` | owner_id в FQDN + SAN `atombus:/user/{id}`; EKU — только если `requireEku=true` (default) |
 | `requireSignerEkuForCms(certDer)` | EKU must include `1.3.6.1.5.5.7.3.4` (не Client Auth) |
 | `extractSanUris` / `extractEkuOids` | SAN URI / EKU OID из leaf DER |
 | `resign(request)` | Новый CMS DER |
@@ -926,6 +926,35 @@ object CloudConfigCms
 | `resignOnlyToPem(...)` | То же → PEM |
 | `resignConfigurationOnly(dto, cert, key)` | Только `cloud_config_pem`; JSON не меняется |
 | `toText(container\|dto)` | Отчёт для лога/UI |
+
+#### Как игнорировать EKU (для отладки)
+
+**Проверка подписи CMS EKU не смотрит.**  
+`verify` / `verifyPem` / `verifyCloudConfiguration` — только crypto-подпись и (для DTO) совпадение `cloud_config_json` с eContent.
+
+EKU проверяется отдельно:
+
+| Вызов | EKU |
+|-------|-----|
+| `verifyCloudConfiguration(dto)` | не проверяется |
+| `requireOwnerIdBinding(dto)` / `requireOwnerIdBinding(..., requireEku = true)` | **да** (default, CES) |
+| `requireOwnerIdBinding(dto, requireEku = false)` | **нет** — остаются FQDN + SAN |
+| `requireSignerEkuForCms(certDer)` | **да** (явный вызов) |
+
+```kotlin
+// только подпись + JSON == eContent
+CloudConfigCms.verifyCloudConfiguration(dto)
+
+// FQDN + SAN, без EKU (demo-signer / Client Auth leaf)
+CloudConfigCms.requireOwnerIdBinding(dto, requireEku = false)
+SgwRegistry.requireCloudConfigOwnerIdBinding(dto, requireEku = false)
+
+// полный CES-контракт (по умолчанию)
+CloudConfigCms.requireOwnerIdBinding(dto) // requireEku = true
+CloudConfigCms.requireSignerEkuForCms(leafCertDer)
+```
+
+`requireEku = false` — для demo / отладки; в production для `cloud_config_pem` обычно оставляют `requireEku = true` (Email Protection).
 
 ### `CloudConfigFromContext`
 
